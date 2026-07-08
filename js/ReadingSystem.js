@@ -345,8 +345,8 @@ export class ReadingSystem {
    * 重置播放器
    */
   resetPlayer() {
-    this.state.sentence = false;
     this.state.currentLyricIndex = -1;
+    this.state.sentenceLoopIndex = -1;
 
     if (this.dom.audioPlayer) {
       this.dom.audioPlayer.pause();
@@ -444,6 +444,11 @@ export class ReadingSystem {
     
     this.playLyricAtIndex(index, time);
     this.persistPlayTime(time);
+
+    // 单句循环 / 点句点读模式：锁定到点击的句子
+    if (this.state.loopMode === 'sentence' || this.state.loopMode === 'click') {
+      this.state.sentenceLoopIndex = index;
+    }
   }
 
   /**
@@ -472,18 +477,53 @@ export class ReadingSystem {
     savePlayTime(this.state.bookPath, this.state.currentUnitIndex, time);
   }
 
+
+  // =========================================================================
+  // 单句循环和点句点读
+  // =========================================================================
+
+  /**
+   * 处理单句循环和点句点读模式
+   */
+  handleSentence() {
+    if (
+      this.state.loopMode == 'list' ||
+      !this.dom.audioPlayer ||
+      this.state.sentenceLoopIndex === -1
+    ) {
+      return;
+    }
+
+    const duration = this.dom.audioPlayer.duration;
+    const currentLyrics = this.state.currentLyrics;
+    const sentenceLoopIndex = this.state.sentenceLoopIndex;
+
+    const boundaries = LRCParser.getSentenceBoundaries(currentLyrics, sentenceLoopIndex, duration);
+    if (!boundaries) return;
+
+    const currentTime = this.dom.audioPlayer.currentTime;
+
+    if (currentTime >= boundaries.endTime) {
+      if (Number.isFinite(boundaries.startTime)) {
+        if (this.state.loopMode === 'click') {
+          // 点句点读：播完一句即停
+          this.dom.audioPlayer.pause();
+          this.dom.audioPlayer.currentTime = boundaries.startTime;
+        } else if (this.state.loopMode === 'sentence') {
+          // 单句循环：跳回句首继续
+          this.dom.audioPlayer.currentTime = boundaries.startTime;
+        }
+      }
+    }
+  }
+
   /**
    * 更新歌词高亮
    */
   updateLyricHighlight() {
-    if (!this.lyricLineEls.length || !this.dom.audioPlayer || this.state.sentence) {
+    if (!this.lyricLineEls.length || !this.dom.audioPlayer) {
       return;
     }
-
-    if (this.state.loopMode !== 'list') {
-      this.state.sentence = true;
-    }
-
     const currentTime = this.dom.audioPlayer.currentTime;
     let newIndex = -1;
 
@@ -497,12 +537,12 @@ export class ReadingSystem {
     if (newIndex === this.state.currentLyricIndex) return;
 
     // 移除旧高亮
-    if (
-      this.state.currentLyricIndex >= 0 &&
-      this.lyricLineEls[this.state.currentLyricIndex]
-    ) {
-      removeClass(this.lyricLineEls[this.state.currentLyricIndex], 'active');
-      removeClass(this.lyricLineEls[this.state.currentLyricIndex], 'pulse');
+    if (this.state.currentLyricIndex >= 0) {
+      const currentLine = this.lyricLineEls[this.state.currentLyricIndex]
+      if (currentLine) {
+        removeClass(currentLine, 'active');
+        removeClass(currentLine, 'pulse');
+      }
     }
 
     // 应用新高亮
@@ -533,41 +573,6 @@ export class ReadingSystem {
     const bottomThreshold = containerRect.bottom - containerRect.height * this.config.UI.LYRIC_SCROLL_THRESHOLD;
 
     return lineRect.top < topThreshold || lineRect.bottom > bottomThreshold;
-  }
-
-  // =========================================================================
-  // 单句循环
-  // =========================================================================
-
-  /**
-   * 处理单句循环
-   */
-  handleSentenceLoop() {
-    if (
-      this.state.loopMode == 'list' ||
-      !this.dom.audioPlayer ||
-      this.state.currentLyricIndex === -1
-    ) {
-      return;
-    }
-
-    const duration = this.dom.audioPlayer.duration;
-    const currentTime = this.dom.audioPlayer.currentTime;
-    const currentLyrics = this.state.currentLyrics;
-    const currentLyricIndex = this.state.currentLyricIndex;
-
-    const boundaries = LRCParser.getSentenceBoundaries(currentLyrics, currentLyricIndex, duration);
-    if (!boundaries) return;
-
-    if (currentTime >= boundaries.endTime) {
-      // 验证 startTime 是否为有效的有限数值
-      if (Number.isFinite(boundaries.startTime)) {
-        this.dom.audioPlayer.currentTime = boundaries.startTime;
-        if ( this.state.loopMode == 'off') {
-          this.dom.audioPlayer.pause();
-        }
-      }
-    }
   }
 
   // =========================================================================
@@ -737,7 +742,21 @@ export class ReadingSystem {
   toggleLoopPlayback() {
     const modes = this.config.LOOP_MODES;
     const currentIndex = modes.indexOf(this.state.loopMode);
-    this.state.loopMode = modes[(currentIndex + 1) % modes.length];
+    const prevMode = this.state.loopMode;
+    const nextMode = modes[(currentIndex + 1) % modes.length];
+
+    this.state.loopMode = nextMode;
+
+    // 进入单句循环或点句点读模式：锁定当前歌词索引
+    if ((nextMode === 'sentence' || nextMode === 'click') && this.state.currentLyricIndex >= 0) {
+      this.state.sentenceLoopIndex = this.state.currentLyricIndex;
+    }
+    // 切换到列表循环：清除单句锁定
+    if (nextMode === 'list') {
+      this.state.sentenceLoopIndex = -1;
+    }
+    // 从 sentence/click 切换到 off：保留锁定，让当前句子播完再停
+
     setStorage(this.config.STORAGE_KEYS.LOOP_MODE, this.state.loopMode);
     this.syncLoopPlayback();
     this.updateLoopPlaybackUI();
@@ -773,18 +792,23 @@ export class ReadingSystem {
     if (!this.dom.loopToggleBtn) return;
 
     const mode = this.state.loopMode;
+    const isClick = mode === 'click';
     const isList = mode === 'list';
     const isSentence = mode === 'sentence';
-    const isActive = isList || isSentence;
+    const isActive = isList || isSentence || isClick;
 
     this.dom.loopToggleBtn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     toggleClass(this.dom.loopToggleBtn, 'active', isList);
     toggleClass(this.dom.loopToggleBtn, 'sentence', isSentence);
+    toggleClass(this.dom.loopToggleBtn, 'click', isClick);
 
-    let title = '列表循环';
-    let label = '列表循环';
+    let title = '点句点读';
+    let label = '点句点读';
 
-    if (isList) {
+    if (isClick) {
+      title = '关闭点句点读';
+      label = '关闭点句点读';
+    } else if (isList) {
       title = '关闭循环播放';
       label = '关闭循环播放';
     } else if (isSentence) {
@@ -831,19 +855,24 @@ export class ReadingSystem {
     const mode = this.state.translationMode;
     toggleClass(document.body, 'hide-translation', mode === 'hide');
     toggleClass(document.body, 'blur-translation', mode === 'blur');
+    toggleClass(document.body, 'only-chinese-translation', mode === 'onlyChinese');
 
-    let text = '中';
+    let text = '双';
     let pressed = 'true';
-    let label = '翻译显示';
+    let label = '显示双语';
 
     if (mode === 'blur') {
       text = '糊';
       pressed = 'mixed';
-      label = '翻译模糊显示';
+      label = '模糊翻译';
     } else if (mode === 'hide') {
       text = '英';
       pressed = 'false';
       label = '仅显示英文';
+    } else if (mode === 'onlyChinese') {
+      text = '中';
+      pressed = 'true';
+      label = '仅显示中文';
     }
 
     setText(this.dom.toggleTranslationBtn, text);
@@ -968,19 +997,17 @@ export class ReadingSystem {
       const lyricLine = event.target.closest('.lyric-line');
       if (lyricLine) {
         this.handleLyricActivate(lyricLine);
-        this.state.sentence = false;
       }
     });
 
     delegate(this.dom.lyricsDisplay, 'keydown', '.lyric-line', (event) => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
-      
+
       // 使用 event.target.closest 获取实际的歌词行元素
       const lyricLine = event.target.closest('.lyric-line');
       if (lyricLine) {
         this.handleLyricActivate(lyricLine);
-        this.state.sentence = false;
       }
     });
   }
@@ -1018,7 +1045,6 @@ export class ReadingSystem {
     // 循环
     on(this.dom.loopToggleBtn, 'click', () => {
       this.toggleLoopPlayback();
-      this.state.sentence = false;
     });
 
     // 进度条
@@ -1066,7 +1092,6 @@ export class ReadingSystem {
       (event) => {
         endDrag();
         this.dom.progressBar.releasePointerCapture(event.pointerId);
-        this.state.sentence = false;
       },
       { passive: true }
     );
@@ -1076,9 +1101,9 @@ export class ReadingSystem {
 
     // Audio 事件
     const updateLyric = throttle(() => {
+      this.handleSentence();
       this.updateLyricHighlight();
       this.updateProgress();
-      this.handleSentenceLoop();
     }, 100);
 
     on(this.dom.audioPlayer, 'timeupdate', updateLyric);

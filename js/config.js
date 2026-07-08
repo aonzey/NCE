@@ -25,10 +25,10 @@ export const CONFIG = {
   AVAILABLE_SPEEDS: [0.5, 0.75, 1.0, 1.25, 1.5, 2.0],
 
   // 翻译显示模式枚举
-  TRANSLATION_MODES: ['show', 'hide', 'blur'],
+  TRANSLATION_MODES: ['show', 'hide', 'onlyChinese', 'blur'],
 
   // 循环播放模式
-  LOOP_MODES: ['off', 'sentence', 'list'],
+  LOOP_MODES: ['off', 'click', 'sentence', 'list'],
 
   // 播放器配置
   PLAYER: {
@@ -37,9 +37,7 @@ export const CONFIG = {
     // LRC 缓存大小限制 (单位: 数量)
     MAX_LRC_CACHE: 10,
     // 时间偏移 (秒) - 使高亮提前出现
-    TIME_OFFSET: 0.5,
-    // 句子边界容差 (秒) - 防止浮点精度问题
-    SENTENCE_BOUNDARY_TOLERANCE: 0.1,
+    TIME_OFFSET: 0.3
   },
 
   // UI 配置
@@ -82,6 +80,7 @@ export function createInitialState() {
     savedPlayTime: 0,
     isProgressDragging: false,
     sentence: false, // 标记是否处于单句循环模式
+    sentenceLoopIndex: -1, // 单句循环锁定的歌词索引（不受高亮更新影响）
   };
 }
 
