@@ -502,11 +502,14 @@ export class ReadingSystem {
     if (!boundaries) return;
 
     const currentTime = this.dom.audioPlayer.currentTime;
-
+    console.log(`"当前时间：" ${currentTime.toFixed(2)}s`);
     if (currentTime >= boundaries.endTime) {
       if (Number.isFinite(boundaries.startTime)) {
         if (this.state.loopMode === 'click') {
           // 点句点读：播完一句即停
+          console.log(`"单句当前时间：" ${currentTime.toFixed(2)}s`);
+          console.log(`"单句结束时间：" ${boundaries.endTime.toFixed(2)}s`); 
+          
           this.dom.audioPlayer.pause();
           this.dom.audioPlayer.currentTime = boundaries.startTime;
         } else if (this.state.loopMode === 'sentence') {
@@ -755,7 +758,6 @@ export class ReadingSystem {
     if (nextMode === 'list') {
       this.state.sentenceLoopIndex = -1;
     }
-    // 从 sentence/click 切换到 off：保留锁定，让当前句子播完再停
 
     setStorage(this.config.STORAGE_KEYS.LOOP_MODE, this.state.loopMode);
     this.syncLoopPlayback();
@@ -853,9 +855,9 @@ export class ReadingSystem {
     if (!this.dom.toggleTranslationBtn) return;
 
     const mode = this.state.translationMode;
-    toggleClass(document.body, 'hide-translation', mode === 'hide');
+    toggleClass(document.body, 'english-translation', mode === 'english');
     toggleClass(document.body, 'blur-translation', mode === 'blur');
-    toggleClass(document.body, 'only-chinese-translation', mode === 'onlyChinese');
+    toggleClass(document.body, 'chinese-translation', mode === 'chinese');
 
     let text = '双';
     let pressed = 'true';
@@ -865,11 +867,11 @@ export class ReadingSystem {
       text = '糊';
       pressed = 'mixed';
       label = '模糊翻译';
-    } else if (mode === 'hide') {
+    } else if (mode === 'english') {
       text = '英';
       pressed = 'false';
       label = '仅显示英文';
-    } else if (mode === 'onlyChinese') {
+    } else if (mode === 'chinese') {
       text = '中';
       pressed = 'true';
       label = '仅显示中文';
@@ -1104,7 +1106,7 @@ export class ReadingSystem {
       this.handleSentence();
       this.updateLyricHighlight();
       this.updateProgress();
-    }, 100);
+    }, 1000/30);
 
     on(this.dom.audioPlayer, 'timeupdate', updateLyric);
     on(this.dom.audioPlayer, 'loadedmetadata', () => this.updateDuration());

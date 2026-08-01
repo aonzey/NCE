@@ -25,7 +25,7 @@ export const CONFIG = {
   AVAILABLE_SPEEDS: [0.5, 0.75, 1.0, 1.25, 1.5, 2.0],
 
   // 翻译显示模式枚举
-  TRANSLATION_MODES: ['show', 'hide', 'onlyChinese', 'blur'],
+  TRANSLATION_MODES: ['show', 'english', 'chinese', 'blur'],
 
   // 循环播放模式
   LOOP_MODES: ['off', 'click', 'sentence', 'list'],
