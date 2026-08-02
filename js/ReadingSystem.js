@@ -502,14 +502,10 @@ export class ReadingSystem {
     if (!boundaries) return;
 
     const currentTime = this.dom.audioPlayer.currentTime;
-    console.log(`"当前时间：" ${currentTime.toFixed(2)}s`);
     if (currentTime >= boundaries.endTime) {
       if (Number.isFinite(boundaries.startTime)) {
         if (this.state.loopMode === 'click') {
           // 点句点读：播完一句即停
-          console.log(`"单句当前时间：" ${currentTime.toFixed(2)}s`);
-          console.log(`"单句结束时间：" ${boundaries.endTime.toFixed(2)}s`); 
-          
           this.dom.audioPlayer.pause();
           this.dom.audioPlayer.currentTime = boundaries.startTime;
         } else if (this.state.loopMode === 'sentence') {
