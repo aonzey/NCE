@@ -62,6 +62,71 @@
 
 ---
 
+
+## 📦 外挂资源
+
+系统的核心设计：**播放器与资源完全解耦**。一份学习资源就是一个可静态托管的目录，包含 `book.json` 描述文件、每课的 MP3 音频与 LRC 歌词。
+
+### 目录结构
+
+```
+your-book/
+├── book.json          # 课本描述文件（必需）
+├── cover.png          # 课本封面（可选）
+├── unit1.mp3          # 课文音频
+├── unit1.lrc          # 课文歌词（中英对照）
+├── unit2.mp3
+└── unit2.lrc
+```
+
+### book.json
+
+```json
+{
+  "bookCover": "cover.png",
+  "units": [
+    { "title": "Unit 1 Hello", "filename": "unit1" },
+    { "title": "Unit 2 Nice to meet you", "filename": "unit2" }
+  ]
+}
+```
+
+系统按 `${bookPath}/${filename}.mp3` 与 `${bookPath}/${filename}.lrc` 拼接资源地址。
+
+### LRC 歌词格式
+
+标准 LRC 时间标签，`|` 分隔英文与中文：
+
+```
+[00:12.34]Good morning, class. | 早上好，同学们。
+[00:15.00]Stand up, please. | 请起立。
+[00:18.50]Sit down, please. | 请坐。
+```
+
+- 时间标签支持 `[mm:ss.xx]` 或 `[mm:ss.xxx]`
+- `|` 左侧为英文、右侧为中文（中文可省略）
+- `#` 开头的行视为注释，空行自动忽略
+
+### 接入自己的资源
+
+1. **准备资源**：按上述结构生成 `book.json`、MP3 与 LRC 文件，托管到任意支持 CORS 的静态服务器（GitHub Pages、Vercel、OSS、Nginx 等）
+2. **注册课本**：在 `data.json` 的 `books` 数组中添加一条记录：
+
+   ```json
+   {
+     "key": "MYBOOK",
+     "title": "My English Book",
+     "bookPath": "https://your-domain.com/your-book"
+   }
+   ```
+
+3. **访问**：部署播放器后，通过 `https://your-player.com/#MYBOOK` 直达该课本
+
+> ⚠️ 资源服务器需返回 CORS 头（如 `Access-Control-Allow-Origin: *`），否则浏览器会拦截跨域请求 `book.json` 与 LRC 文件。
+
+
+---
+
 ### ⚠️ 说明与版权
 
 - 本项目**仅供个人学习研究使用**，非商业用途。
