@@ -3,7 +3,7 @@
 
 [![Stars](https://img.shields.io/github/stars/ichochy/nce.svg?style=social)](https://github.com/ichochy/nce/stargazers)
 [![License](https://img.shields.io/github/license/ichochy/nce)](https://github.com/ichochy/nce/blob/main/LICENSE)
-[![Demo](https://img.shields.io/badge/Demo-在线体验-brightgreen)](http://nce.ichochy.com)
+[![Live](https://img.shields.io/badge/Live-在线体验-brightgreen)](http://nce.ichochy.com)
 
 **《New Concept English》** 全四册在线课文朗读、**单句点读**、中英对照，随时随地自学英语！
 
@@ -83,7 +83,9 @@ your-book/
 
 ```json
 {
-  "bookCover": "cover.png",
+  "name": "新概念英语",
+  "level": "1 st",
+  "cover": "cover.png",
   "units": [
     { "title": "Unit 1 Hello", "filename": "unit1" },
     { "title": "Unit 2 Nice to meet you", "filename": "unit2" }
@@ -116,7 +118,7 @@ your-book/
    {
      "key": "MYBOOK",
      "title": "My English Book",
-     "bookPath": "https://your-domain.com/your-book"
+     "path": "https://your-domain.com/your-book"
    }
    ```
 
