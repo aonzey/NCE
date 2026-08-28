@@ -1,0 +1,6 @@
+# 本地部署资源（junction 指向本地音频/歌词目录，不纳入版本库）
+resources/
+
+# 本地部署辅助脚本
+start_server.bat
+tools/

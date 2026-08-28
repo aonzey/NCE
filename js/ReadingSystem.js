@@ -402,6 +402,13 @@ export class ReadingSystem {
     const index = locked >= 0
       ? locked
       : LRCParser.findLyricIndexByTime(this.state.currentLyrics, this.player.currentTime);
+
+    // 单句循环模式：上一句循环完成后自动锁定下一句，保持整课逐句循环
+    if (locked < 0 && this.state.loopMode === 'one' && index >= 0 && index !== this.state.currentLyricIndex) {
+      this.state.sentenceLoopIndex = index;
+      this.state.sentenceRepeatCount = 1;
+    }
+
     this.#setHighlight(index);
   }
 
@@ -420,8 +427,32 @@ export class ReadingSystem {
     if (currentTime < endTime) return;
 
     if (this.state.loopMode === 'click') {
-      this.player.seek(boundaries.startTime);
-      this.player.pause();
+      const loopCount = this.state.loopCount;
+      const isInfinite = !Number.isFinite(loopCount) || loopCount <= 0;
+
+      // 未设置循环次数时保持点读原行为：播完一遍回到句首并暂停
+      if (isInfinite) {
+        this.player.seek(boundaries.startTime);
+        this.player.pause();
+        this.#setHighlight(locked);
+        return;
+      }
+
+      // 达到指定次数：回到句首并暂停，等待下一次点读
+      if (this.state.sentenceRepeatCount >= loopCount) {
+        this.state.sentenceLoopIndex = -1;
+        this.state.sentenceRepeatCount = 0;
+        this.#cancelSentenceRestart();
+        this.player.seek(boundaries.startTime);
+        this.player.pause();
+        this.#setHighlight(locked);
+        this.toast.show('点读完成');
+        return;
+      }
+
+      // 未达到次数：按间隔时间继续重播
+      this.state.sentenceRepeatCount += 1;
+      this.#restartSentence(boundaries.startTime);
       this.#setHighlight(locked);
       return;
     }
@@ -432,7 +463,6 @@ export class ReadingSystem {
     if (!isInfinite && this.state.sentenceRepeatCount >= loopCount) {
       this.state.sentenceLoopIndex = -1;
       this.state.sentenceRepeatCount = 0;
-      this.toast.show('单句循环完成，继续播放');
       return;
     }
 
@@ -540,14 +570,15 @@ export class ReadingSystem {
     toggleClass(this.loopToggleBtn, 'book', isBook);
 
     let label = LOOP_MODE_LABELS[mode] || '循环播放';
-    if (isOne) {
+    const hasLoopLimit = (Number(this.state.loopCount) || 0) > 0;
+    if (isOne || (isClick && hasLoopLimit)) {
       label = `${label} · ${this.#loopCountLabel()} · ${this.#loopIntervalLabel()}`;
     }
     this.loopToggleBtn.title = label;
     this.loopToggleBtn.setAttribute('aria-label', label);
 
     if (this.loopSettingsBtn) {
-      const enabled = isOne;
+      const enabled = isOne || isClick;
       this.loopSettingsBtn.disabled = !enabled;
       toggleClass(this.loopSettingsBtn, 'active', enabled);
       if (!enabled && this.loopSettingsPanel && !this.loopSettingsPanel.hidden) {

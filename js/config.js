@@ -67,6 +67,5 @@ export function createInitialState() {
     sentenceRepeatCount: 1,
     playbackRate: 1.0,
     translationMode: 'show',
-    sentenceLoopIndex: -1,
   };
 }
