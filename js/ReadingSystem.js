@@ -63,6 +63,7 @@ export class ReadingSystem {
       onPersist: () => this.#saveProgress(),
       onEnded: () => this.#onAudioEnded(),
       onLoaded: () => this.toast.show('音频已加载', { type: 'success' }),
+      onUserPause: () => this.#cancelSentenceRestart(),
     });
 
     this.lyricsView = new LyricsView({
@@ -88,7 +89,15 @@ export class ReadingSystem {
     this.speedBtn = qs('#speedBtn');
     this.speedText = qs('#speedText');
     this.loopToggleBtn = qs('#loopToggleBtn');
+    this.loopSettingsBtn = qs('#loopSettingsBtn');
+    this.loopSettingsPanel = qs('#loopSettingsPanel');
+    this.loopCountSelect = qs('#loopCountSelect');
+    this.loopIntervalSelect = qs('#loopIntervalSelect');
     this.toggleTranslationBtn = qs('#toggleTranslationBtn');
+
+    this.sentenceRestartTimer = null;
+    this.sentenceLoopToken = 0;
+    this.pendingRestartStartTime = 0;
 
     this.toast = new Toast();
 
@@ -200,6 +209,8 @@ export class ReadingSystem {
     this.state.currentUnitIndex = unitIndex;
     this.state.currentLyricIndex = -1;
     this.state.sentenceLoopIndex = -1;
+    this.state.sentenceRepeatCount = 1;
+    this.#cancelSentenceRestart();
     this.state.currentLyrics = [];
     saveCurrentUnitIndex(this.state.bookKey, unitIndex);
 
@@ -231,6 +242,7 @@ export class ReadingSystem {
   }
 
   destroy() {
+    this.#cancelSentenceRestart();
     this.#saveProgress();
     this.bookAbort?.abort();
     this.unitAbort?.abort();
@@ -248,6 +260,32 @@ export class ReadingSystem {
     on(this.speedBtn, 'click', () => this.#cycleSpeed(), { signal });
     on(this.loopToggleBtn, 'click', () => this.#cycleLoopMode(), { signal });
     on(this.toggleTranslationBtn, 'click', () => this.#cycleTranslation(), { signal });
+
+    if (this.loopSettingsBtn) {
+      on(this.loopSettingsBtn, 'click', (event) => {
+        event.stopPropagation();
+        this.#toggleLoopSettings();
+      }, { signal });
+    }
+    if (this.loopCountSelect) {
+      on(this.loopCountSelect, 'change', (event) => this.#onLoopCountChange(event), { signal });
+    }
+    if (this.loopIntervalSelect) {
+      on(this.loopIntervalSelect, 'change', (event) => this.#onLoopIntervalChange(event), { signal });
+    }
+    if (this.loopSettingsPanel) {
+      on(document, 'click', (event) => {
+        if (this.loopSettingsPanel.hidden) return;
+        if (this.loopSettingsPanel.contains(event.target)) return;
+        if (this.loopSettingsBtn?.contains(event.target)) return;
+        this.#toggleLoopSettings(false);
+      }, { signal });
+      on(document, 'keydown', (event) => {
+        if (event.key === 'Escape' && !this.loopSettingsPanel.hidden) {
+          this.#toggleLoopSettings(false);
+        }
+      }, { signal });
+    }
 
     on(window, 'hashchange', () => {
       const newKey = location.hash.slice(1).trim() || this.config.DEFAULT_BOOK_KEY;
@@ -276,6 +314,16 @@ export class ReadingSystem {
       this.state.loopMode = 'list';
     }
 
+    const storedLoopCount = Number(getStorage(this.config.STORAGE_KEYS.LOOP_COUNT));
+    if (this.config.LOOP_COUNT_OPTIONS.includes(storedLoopCount)) {
+      this.state.loopCount = storedLoopCount;
+    }
+
+    const storedLoopInterval = Number(getStorage(this.config.STORAGE_KEYS.LOOP_INTERVAL));
+    if (this.config.LOOP_INTERVAL_OPTIONS.includes(storedLoopInterval)) {
+      this.state.loopInterval = storedLoopInterval;
+    }
+
     const storedSpeed = parseFloat(getStorage(this.config.STORAGE_KEYS.PLAYBACK_RATE));
     if (this.config.AVAILABLE_SPEEDS.includes(storedSpeed)) {
       this.state.playbackRate = storedSpeed;
@@ -290,6 +338,7 @@ export class ReadingSystem {
     this.player.setRate(this.state.playbackRate);
     this.#updateSpeedUI();
     this.#updateLoopUI();
+    this.#updateLoopSettingsUI();
     this.lyricsView.applyTranslationMode(this.state.translationMode, this.toggleTranslationBtn);
   }
 
@@ -318,7 +367,11 @@ export class ReadingSystem {
 
   #onLyricActivate(index, time) {
     if (this.state.loopMode === 'one' || this.state.loopMode === 'click') {
+      if (index !== this.state.sentenceLoopIndex) {
+        this.#cancelSentenceRestart();
+      }
       this.state.sentenceLoopIndex = index;
+      this.state.sentenceRepeatCount = 1;
     }
     this.#setHighlight(index);
     this.player.seek(time);
@@ -366,11 +419,58 @@ export class ReadingSystem {
     const endTime = boundaries.endTime;
     if (currentTime < endTime) return;
 
-    this.player.seek(boundaries.startTime);
     if (this.state.loopMode === 'click') {
+      this.player.seek(boundaries.startTime);
       this.player.pause();
+      this.#setHighlight(locked);
+      return;
     }
+
+    // 单句循环：按「循环次数 + 间隔时间」控制重复
+    const loopCount = this.state.loopCount;
+    const isInfinite = !Number.isFinite(loopCount) || loopCount <= 0;
+    if (!isInfinite && this.state.sentenceRepeatCount >= loopCount) {
+      this.state.sentenceLoopIndex = -1;
+      this.state.sentenceRepeatCount = 0;
+      this.toast.show('单句循环完成，继续播放');
+      return;
+    }
+
+    this.state.sentenceRepeatCount += 1;
+    this.#restartSentence(boundaries.startTime);
     this.#setHighlight(locked);
+  }
+
+  /**
+   * 将当前句子跳回起点重新播放；设置了间隔时间时先暂停，等待间隔后再继续
+   * @param {number} startTime 句子起始时间（秒）
+   */
+  #restartSentence(startTime) {
+    this.#cancelSentenceRestart();
+    this.pendingRestartStartTime = startTime;
+    const intervalMs = Math.max(0, Number(this.state.loopInterval) || 0) * 1000;
+    if (intervalMs <= 0) {
+      this.player.seek(startTime);
+      return;
+    }
+
+    this.player.pause();
+    const token = this.sentenceLoopToken;
+    this.sentenceRestartTimer = setTimeout(() => {
+      this.sentenceRestartTimer = null;
+      if (token !== this.sentenceLoopToken) return;
+      this.player.seek(startTime);
+      this.player.play();
+    }, intervalMs);
+  }
+
+  /** 取消待执行的循环重启定时器并作废其 token */
+  #cancelSentenceRestart() {
+    this.sentenceLoopToken += 1;
+    if (this.sentenceRestartTimer) {
+      clearTimeout(this.sentenceRestartTimer);
+      this.sentenceRestartTimer = null;
+    }
   }
 
   #cycleSpeed() {
@@ -405,11 +505,16 @@ export class ReadingSystem {
     const nextMode = modes[(modes.indexOf(this.state.loopMode) + 1) % modes.length];
     this.state.loopMode = nextMode;
 
-    if ((nextMode === 'one' || nextMode === 'click') && this.state.currentLyricIndex >= 0) {
-      this.state.sentenceLoopIndex = this.state.currentLyricIndex;
+    if (nextMode === 'one' || nextMode === 'click') {
+      if (this.state.currentLyricIndex >= 0) {
+        this.state.sentenceLoopIndex = this.state.currentLyricIndex;
+      }
+      this.state.sentenceRepeatCount = 1;
     }
     if (nextMode === 'list' || nextMode === 'off' || nextMode === 'book') {
       this.state.sentenceLoopIndex = -1;
+      this.state.sentenceRepeatCount = 0;
+      this.#cancelSentenceRestart();
     }
 
     setStorage(this.config.STORAGE_KEYS.LOOP_MODE, nextMode);
@@ -434,9 +539,80 @@ export class ReadingSystem {
     toggleClass(this.loopToggleBtn, 'one', isOne);
     toggleClass(this.loopToggleBtn, 'book', isBook);
 
-    const label = LOOP_MODE_LABELS[mode] || '循环播放';
+    let label = LOOP_MODE_LABELS[mode] || '循环播放';
+    if (isOne) {
+      label = `${label} · ${this.#loopCountLabel()} · ${this.#loopIntervalLabel()}`;
+    }
     this.loopToggleBtn.title = label;
     this.loopToggleBtn.setAttribute('aria-label', label);
+
+    if (this.loopSettingsBtn) {
+      const enabled = isOne;
+      this.loopSettingsBtn.disabled = !enabled;
+      toggleClass(this.loopSettingsBtn, 'active', enabled);
+      if (!enabled && this.loopSettingsPanel && !this.loopSettingsPanel.hidden) {
+        this.#toggleLoopSettings(false);
+      }
+    }
+  }
+
+  /** 循环次数文案 */
+  #loopCountLabel() {
+    const count = Number(this.state.loopCount) || 0;
+    return count > 0 ? `循环 ${count} 次` : '无限循环';
+  }
+
+  /** 循环间隔文案 */
+  #loopIntervalLabel() {
+    const interval = Number(this.state.loopInterval) || 0;
+    return interval > 0 ? `间隔 ${interval} 秒` : '无间隔';
+  }
+
+  /** 将状态同步到设置面板控件 */
+  #updateLoopSettingsUI() {
+    if (this.loopCountSelect) {
+      this.loopCountSelect.value = String(this.state.loopCount);
+    }
+    if (this.loopIntervalSelect) {
+      this.loopIntervalSelect.value = String(this.state.loopInterval);
+    }
+  }
+
+  /**
+   * 展开/收起单句循环设置面板
+   * @param {boolean} [force]
+   */
+  #toggleLoopSettings(force) {
+    if (!this.loopSettingsPanel || !this.loopSettingsBtn) return;
+    const show = typeof force === 'boolean' ? force : this.loopSettingsPanel.hidden;
+    this.loopSettingsPanel.hidden = !show;
+    this.loopSettingsBtn.setAttribute('aria-expanded', show ? 'true' : 'false');
+    if (show) this.#updateLoopSettingsUI();
+  }
+
+  #onLoopCountChange(event) {
+    const value = Number(event.target.value);
+    if (!this.config.LOOP_COUNT_OPTIONS.includes(value)) return;
+    this.state.loopCount = value;
+    this.state.sentenceRepeatCount = 1;
+    if (this.sentenceRestartTimer !== null) {
+      this.#restartSentence(this.pendingRestartStartTime);
+    }
+    setStorage(this.config.STORAGE_KEYS.LOOP_COUNT, value);
+    this.#updateLoopUI();
+    this.toast.show(`循环次数：${this.#loopCountLabel()}`);
+  }
+
+  #onLoopIntervalChange(event) {
+    const value = Number(event.target.value);
+    if (!this.config.LOOP_INTERVAL_OPTIONS.includes(value)) return;
+    this.state.loopInterval = value;
+    if (this.sentenceRestartTimer !== null) {
+      this.#restartSentence(this.pendingRestartStartTime);
+    }
+    setStorage(this.config.STORAGE_KEYS.LOOP_INTERVAL, value);
+    this.#updateLoopUI();
+    this.toast.show(`循环间隔：${this.#loopIntervalLabel()}`);
   }
 
   #cycleTranslation() {

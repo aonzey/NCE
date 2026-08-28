@@ -188,6 +188,36 @@
                 <path d="M7 18.5L5.5 17 7 15.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             </button>
+            <button id="loopSettingsBtn" class="loop-settings-btn" type="button" title="单句循环设置" aria-label="单句循环设置" aria-expanded="false" disabled>
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <circle cx="10" cy="10" r="3" stroke="currentColor" stroke-width="1.5" />
+                <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.2 4.2l1.4 1.4M14.4 14.4l1.4 1.4M15.8 4.2l-1.4 1.4M5.6 14.4l-1.4 1.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+              </svg>
+            </button>
+          </div>
+
+          <div id="loopSettingsPanel" class="loop-settings-panel" hidden>
+            <div class="loop-settings-header">单句循环设置</div>
+            <label class="loop-settings-row">
+              <span class="loop-settings-label">循环次数</span>
+              <select id="loopCountSelect" class="loop-settings-select" aria-label="循环次数">
+                <option value="0">无限</option>
+                <option value="2">2 次</option>
+                <option value="3">3 次</option>
+                <option value="5">5 次</option>
+                <option value="10">10 次</option>
+              </select>
+            </label>
+            <label class="loop-settings-row">
+              <span class="loop-settings-label">间隔时间</span>
+              <select id="loopIntervalSelect" class="loop-settings-select" aria-label="循环间隔时间">
+                <option value="0">0 秒（无间隔）</option>
+                <option value="0.5">0.5 秒</option>
+                <option value="1">1 秒</option>
+                <option value="2">2 秒</option>
+                <option value="3">3 秒</option>
+              </select>
+            </label>
           </div>
 
           <div class="audio-player">

@@ -18,6 +18,7 @@ export class AudioController {
    * @param {(currentTime: number) => void} [options.onPersist]
    * @param {() => void} [options.onEnded]
    * @param {() => void} [options.onLoaded] 音频加载完成（元数据就绪）后触发
+   * @param {() => void} [options.onUserPause] 用户通过播放按钮手动暂停时触发
    */
   constructor(options) {
     this.audio = options.audio;
@@ -29,6 +30,7 @@ export class AudioController {
     this.onPersist = options.onPersist;
     this.onEnded = options.onEnded;
     this.onLoaded = options.onLoaded;
+    this.onUserPause = options.onUserPause;
 
     this.dragging = false;
     this.pendingTime = 0;
@@ -155,7 +157,10 @@ export class AudioController {
     const signal = this.abort.signal;
 
     if (this.playBtn) {
-      on(this.playBtn, 'click', () => this.toggle(), { signal });
+      on(this.playBtn, 'click', () => {
+        if (!this.paused) this.onUserPause?.();
+        this.toggle();
+      }, { signal });
     }
 
     if (this.progressBar) {
