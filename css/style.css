@@ -1264,6 +1264,80 @@ body.dark-theme .play-btn:disabled {
   border-color: var(--accent-1);
 }
 
+/* 字号选项面板：向下弹出（控制栏位于页面上部，向上会溢出视口并被 header 遮挡） */
+.lyric-size-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.lyric-size-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 45;
+  min-width: 148px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--glass-strong);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* [hidden] 只是浏览器默认样式（display: none），优先级低于上面的类选择器，
+   必须显式覆盖，否则面板即使带 hidden 属性也照样常驻显示 */
+.lyric-size-panel[hidden] {
+  display: none;
+}
+
+.lyric-size-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-1);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+.lyric-size-option:hover {
+  background: var(--accent-3);
+}
+
+.lyric-size-option.active {
+  background: var(--accent-1);
+  color: #fff;
+}
+
+/* 选项文字按档位缩放，充当字号预览 */
+.lyric-size-option-name {
+  font-weight: 700;
+  line-height: 1.25;
+  font-family: var(--font-display);
+}
+
+.lyric-size-option-value {
+  font-size: 12px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.lyric-size-option.active .lyric-size-option-value {
+  color: rgba(255, 255, 255, 0.88);
+}
+
 .lyrics-container {
   /* 歌词字号缩放系数，由 JS 通过 --lyric-scale 覆盖 */
   --lyric-scale: 1;

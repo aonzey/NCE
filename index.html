@@ -173,9 +173,13 @@
             <button id="toggleTranslationBtn" class="toggle-translation-btn" type="button" aria-pressed="false">
               中
             </button>
-            <button id="lyricSizeBtn" class="lyric-size-btn" type="button" title="字号：标准" aria-label="调节歌词字号">
-              <span id="lyricSizeText">A</span>
-            </button>
+            <div class="lyric-size-wrap">
+              <button id="lyricSizeBtn" class="lyric-size-btn" type="button" title="字号：标准" aria-label="调节歌词字号"
+                      aria-haspopup="true" aria-expanded="false" aria-controls="lyricSizePanel">
+                <span id="lyricSizeText">A</span>
+              </button>
+              <div id="lyricSizePanel" class="lyric-size-panel" hidden></div>
+            </div>
             <button id="loopToggleBtn" class="loop-toggle-btn" type="button" title="循环播放" aria-label="循环播放" aria-pressed="false">
               <!-- 1. 关闭循环：循环箭头 + 斜线禁用符号 -->
               <svg class="loop-icon-off" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">

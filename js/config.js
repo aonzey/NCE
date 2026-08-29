@@ -34,7 +34,9 @@ export const CONFIG = {
    * 歌词文本字号档位（相对倍率，作用于 .lyrics-container 内歌词）
    * @type {number[]}
    */
-  LYRIC_SCALE_OPTIONS: [0.85, 1, 1.15, 1.3, 1.5],
+  LYRIC_SCALE_OPTIONS: [0.85, 1, 1.3, 2, 3],
+  /** 字号档位显示名，与 LYRIC_SCALE_OPTIONS 一一对应 */
+  LYRIC_SCALE_LABELS: ['小', '标准', '大', '特大', '最大'],
 
   PLAYER: {
     MAX_AUDIO_CACHE: 3,
