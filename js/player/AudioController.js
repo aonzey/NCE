@@ -61,7 +61,10 @@ export class AudioController {
     this.audio.pause();
     this.audio.src = url;
     this.audio.loop = Boolean(options.loop);
-    this.audio.playbackRate = options.playbackRate ?? 1;
+    const rate = Number.isFinite(options.playbackRate) ? options.playbackRate : 1;
+    // load() 会把 playbackRate 重置为 defaultPlaybackRate，两者必须同步维护
+    this.audio.defaultPlaybackRate = rate;
+    this.audio.playbackRate = rate;
     this.pendingTime = Number.isFinite(options.startTime) ? options.startTime : 0;
     this.setDisabled(true);
     this.setProgress(0);
@@ -74,6 +77,7 @@ export class AudioController {
 
   setRate(rate) {
     if (this.audio && Number.isFinite(rate)) {
+      this.audio.defaultPlaybackRate = rate;
       this.audio.playbackRate = rate;
     }
   }
@@ -212,6 +216,8 @@ export class AudioController {
 
     on(this.audio, 'timeupdate', tick, { signal });
     on(this.audio, 'loadedmetadata', () => {
+      // 兜底：部分浏览器在加载新资源后仍可能将速率归 1
+      this.audio.playbackRate = this.audio.defaultPlaybackRate;
       this.#applyPendingTime();
       this.setDisabled(false);
       this.onLoaded?.();

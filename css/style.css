@@ -525,6 +525,7 @@ body.dark-theme .moon-icon {
 .nav-btn,
 .loop-toggle-btn,
 .toggle-translation-btn,
+.lyric-size-btn,
 .speed-btn {
   display: inline-flex;
   align-items: center;
@@ -540,7 +541,8 @@ body.dark-theme .moon-icon {
 
 .nav-btn,
 .loop-toggle-btn,
-.toggle-translation-btn {
+.toggle-translation-btn,
+.lyric-size-btn {
   width: var(--control-h);
   min-width: var(--control-h);
   padding: 0;
@@ -550,6 +552,7 @@ body.dark-theme .moon-icon {
 .nav-btn:hover,
 .loop-toggle-btn:hover,
 .toggle-translation-btn:hover,
+.lyric-size-btn:hover,
 .speed-btn:hover {
   background: var(--accent-3);
   border-color: var(--accent-1);
@@ -560,6 +563,7 @@ body.dark-theme .moon-icon {
 .nav-btn:active,
 .loop-toggle-btn:active,
 .toggle-translation-btn:active,
+.lyric-size-btn:active,
 .speed-btn:active {
   transform: scale(0.96);
 }
@@ -996,7 +1000,25 @@ body.dark-theme .play-btn:disabled {
   letter-spacing: 0.04em;
 }
 
+.lyric-size-btn {
+  font-family: var(--font-display);
+}
+
+.lyric-size-btn #lyricSizeText {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+  transition: font-size 0.2s ease;
+}
+
+.lyric-size-btn.active {
+  color: var(--accent-1);
+  border-color: var(--accent-1);
+}
+
 .lyrics-container {
+  /* 歌词字号缩放系数，由 JS 通过 --lyric-scale 覆盖 */
+  --lyric-scale: 1;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -1016,7 +1038,7 @@ body.english-translation .lyric-translation {
 }
 
 body.english-translation .lyric-text {
-  font-size: 20px;
+  font-size: calc(20px * var(--lyric-scale, 1));
 }
 
 body.chinese-translation .lyric-text {
@@ -1024,7 +1046,7 @@ body.chinese-translation .lyric-text {
 }
 
 body.chinese-translation .lyric-translation {
-  font-size: 17px;
+  font-size: calc(17px * var(--lyric-scale, 1));
   color: var(--ink-1);
   font-weight: 600;
   line-height: 1.5;
@@ -1076,7 +1098,7 @@ body.blur-translation .lyric-line:hover .lyric-text {
 
 .lyric-text {
   font-family: var(--font-display);
-  font-size: 17px;
+  font-size: calc(17px * var(--lyric-scale, 1));
   line-height: 1.4;
   font-weight: 650;
   color: var(--ink-1);
@@ -1088,7 +1110,7 @@ body.blur-translation .lyric-line:hover .lyric-text {
 }
 
 .lyric-translation {
-  font-size: 13px;
+  font-size: calc(13px * var(--lyric-scale, 1));
   line-height: 1.4;
   margin-top: 3px;
   color: var(--ink-2);
@@ -1453,11 +1475,11 @@ body::-webkit-scrollbar-thumb:hover,
   }
 
   .lyric-text {
-    font-size: 16px;
+    font-size: calc(16px * var(--lyric-scale, 1));
   }
 
   .lyric-translation {
-    font-size: 12px;
+    font-size: calc(12px * var(--lyric-scale, 1));
   }
 
   .placeholder {

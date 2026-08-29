@@ -13,6 +13,7 @@ export const CONFIG = {
     LOOP_INTERVAL: 'loopInterval',
     PLAYBACK_RATE: 'playbackRate',
     TRANSLATION_MODE: 'translationMode',
+    LYRIC_SCALE: 'lyricScale',
     THEME: 'theme',
   },
 
@@ -29,6 +30,11 @@ export const CONFIG = {
   LOOP_INTERVAL_OPTIONS: [0, 0.5, 1, 2, 3],
   TRANSLATION_MODES: ['show', 'english', 'chinese', 'blur'],
   LOOP_MODES: ['off', 'click', 'one', 'list', 'book'],
+  /**
+   * 歌词文本字号档位（相对倍率，作用于 .lyrics-container 内歌词）
+   * @type {number[]}
+   */
+  LYRIC_SCALE_OPTIONS: [0.85, 1, 1.15, 1.3, 1.5],
 
   PLAYER: {
     MAX_AUDIO_CACHE: 3,
@@ -67,5 +73,6 @@ export function createInitialState() {
     sentenceRepeatCount: 1,
     playbackRate: 1.0,
     translationMode: 'show',
+    lyricScale: 1,
   };
 }

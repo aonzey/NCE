@@ -94,6 +94,9 @@ export class ReadingSystem {
     this.loopCountSelect = qs('#loopCountSelect');
     this.loopIntervalSelect = qs('#loopIntervalSelect');
     this.toggleTranslationBtn = qs('#toggleTranslationBtn');
+    this.lyricSizeBtn = qs('#lyricSizeBtn');
+    this.lyricSizeText = qs('#lyricSizeText');
+    this.lyricsContainerEl = qs('.lyrics-container');
 
     this.sentenceRestartTimer = null;
     this.sentenceLoopToken = 0;
@@ -260,6 +263,9 @@ export class ReadingSystem {
     on(this.speedBtn, 'click', () => this.#cycleSpeed(), { signal });
     on(this.loopToggleBtn, 'click', () => this.#cycleLoopMode(), { signal });
     on(this.toggleTranslationBtn, 'click', () => this.#cycleTranslation(), { signal });
+    if (this.lyricSizeBtn) {
+      on(this.lyricSizeBtn, 'click', () => this.#cycleLyricSize(), { signal });
+    }
 
     if (this.loopSettingsBtn) {
       on(this.loopSettingsBtn, 'click', (event) => {
@@ -334,11 +340,17 @@ export class ReadingSystem {
       this.state.translationMode = storedTranslation;
     }
 
+    const storedLyricScale = parseFloat(getStorage(this.config.STORAGE_KEYS.LYRIC_SCALE));
+    if (this.config.LYRIC_SCALE_OPTIONS.includes(storedLyricScale)) {
+      this.state.lyricScale = storedLyricScale;
+    }
+
     this.player.setLoop(this.state.loopMode === 'list');
     this.player.setRate(this.state.playbackRate);
     this.#updateSpeedUI();
     this.#updateLoopUI();
     this.#updateLoopSettingsUI();
+    this.#applyLyricScale();
     this.lyricsView.applyTranslationMode(this.state.translationMode, this.toggleTranslationBtn);
   }
 
@@ -653,6 +665,39 @@ export class ReadingSystem {
     setStorage(this.config.STORAGE_KEYS.TRANSLATION_MODE, this.state.translationMode);
     this.lyricsView.applyTranslationMode(this.state.translationMode, this.toggleTranslationBtn);
     this.toast.show(TRANSLATION_LABELS[this.state.translationMode]);
+  }
+
+  /** 歌词字号档位文案 */
+  #lyricScaleLabel() {
+    const scale = Number(this.state.lyricScale) || 1;
+    if (scale < 0.9) return '小';
+    if (scale < 1.05) return '标准';
+    if (scale < 1.2) return '大';
+    if (scale < 1.4) return '特大';
+    return '最大';
+  }
+
+  /** 将字号档位写入 CSS 变量并更新按钮状态 */
+  #applyLyricScale() {
+    const scale = Number(this.state.lyricScale) || 1;
+    this.lyricsContainerEl?.style.setProperty('--lyric-scale', scale);
+    if (this.lyricSizeBtn) {
+      this.lyricSizeBtn.title = `字号：${this.#lyricScaleLabel()}`;
+      this.lyricSizeBtn.setAttribute('aria-label', `调节歌词字号（当前${this.#lyricScaleLabel()}）`);
+      toggleClass(this.lyricSizeBtn, 'active', scale !== 1);
+    }
+    if (this.lyricSizeText) {
+      this.lyricSizeText.style.fontSize = `${(15 + (scale - 1) * 10).toFixed(1)}px`;
+    }
+  }
+
+  #cycleLyricSize() {
+    const options = this.config.LYRIC_SCALE_OPTIONS;
+    const currentIndex = options.indexOf(this.state.lyricScale);
+    this.state.lyricScale = options[(currentIndex + 1) % options.length];
+    setStorage(this.config.STORAGE_KEYS.LYRIC_SCALE, this.state.lyricScale);
+    this.#applyLyricScale();
+    this.toast.show(`字号：${this.#lyricScaleLabel()}`);
   }
 
   #saveProgress(time = this.player.currentTime) {
