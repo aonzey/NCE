@@ -130,6 +130,9 @@ export class ImportService {
       }
       if (unit.lrcText) {
         resolved.lrc = this.#createBlobUrl(new Blob([unit.lrcText], { type: 'text/plain' }));
+      } else if (unit.lrcUrl) {
+        // 远程歌词（book.json 导入）：保留 URL，播放时按需加载，不预下载
+        resolved.lrc = unit.lrcUrl;
       }
       if (!resolved.audio) continue;
       resolved.id = units.length + 1;
@@ -236,13 +239,31 @@ export class ImportService {
   }
 
   /**
-   * 由 URL 导入：自动识别 ZIP 包或 HTML 目录列表
+   * 由 URL 导入：自动识别 book.json 课程清单 / ZIP 包 / HTML 目录列表
    * @param {string} rawUrl
    * @param {{title?: string}} [options]
    * @param {(done: number, total: number) => void} [onProgress]
    */
   async importFromUrl(rawUrl, options = {}, onProgress) {
     const requestUrl = new URL(rawUrl, location.href).toString();
+
+    // 目录形式的 URL（如 https://nce.mleo.site/NCE1）：优先探测其下的 book.json
+    if (!/\.(json|zip)(\?|$)/i.test(requestUrl)) {
+      const probeUrl = requestUrl.replace(/\/+$/, '') + '/book.json';
+      try {
+        const probe = await fetch(probeUrl);
+        if (probe.ok) {
+          const probeText = await probe.text();
+          if (probeText.trim().startsWith('{')) {
+            const data = JSON.parse(probeText);
+            return this.#importFromBookJson(data, probe.url || probeUrl, options, onProgress);
+          }
+        }
+      } catch {
+        // 探测失败则回退到 ZIP / 目录列表逻辑
+      }
+    }
+
     const response = await fetch(requestUrl);
     if (!response.ok) throw new Error(`URL 请求失败：HTTP ${response.status}`);
 
@@ -262,9 +283,22 @@ export class ImportService {
       return this.importFromZip(buffer, { ...options, title: fallbackTitle }, onProgress);
     }
 
+    // book.json 课程清单（或任意 JSON 清单）
+    const text = new TextDecoder('utf-8').decode(buffer);
+    const trimmed = text.trim();
+    const isJson = /json/.test(contentType) || /\.json(\?|$)/i.test(url) || trimmed.startsWith('{');
+    if (isJson) {
+      let data;
+      try {
+        data = JSON.parse(trimmed);
+      } catch {
+        throw new Error('JSON 解析失败，请确认是有效的 book.json');
+      }
+      return this.#importFromBookJson(data, url, options, onProgress);
+    }
+
     // HTML 目录列表：解析 <a href> 中的 mp3 / lrc
-    const html = new TextDecoder('utf-8').decode(buffer);
-    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const doc = new DOMParser().parseFromString(text, 'text/html');
     const links = [...doc.querySelectorAll('a[href]')]
       .map((a) => a.getAttribute('href'))
       .filter((href) => href && /\.(mp3|lrc)(\?|$)/i.test(href))
@@ -317,6 +351,73 @@ export class ImportService {
     }
 
     return this.#finalize(record);
+  }
+
+  /**
+   * 由 book.json 课程清单导入（远程课本，音频/歌词保留原始 URL 按需加载）
+   * @param {Object} data 已解析的 book.json
+   * @param {string} baseUrl book.json 的最终 URL，用于解析相对路径
+   * @param {{title?: string}} [options]
+   * @param {(done: number, total: number) => void} [onProgress]
+   */
+  async #importFromBookJson(data, baseUrl, options = {}, onProgress) {
+    const rawUnits = Array.isArray(data?.units) ? data.units : [];
+    if (!rawUnits.length) throw new Error('book.json 中没有课程（units 为空）');
+
+    const record = this.#createRecord({ ...options, source: 'url-json' });
+    if (!record.title) record.title = this.#bookJsonTitle(data, baseUrl);
+
+    const toUrl = (filePath) => {
+      if (!filePath) return '';
+      try {
+        return new URL(filePath, baseUrl).toString();
+      } catch {
+        return '';
+      }
+    };
+
+    let done = 0;
+    for (const unit of rawUnits) {
+      const filename = String(unit?.filename ?? unit?.name ?? '').trim();
+      if (!filename) continue;
+      const base = filename.replace(/\.(mp3|lrc)$/i, '');
+      const audioUrl = toUrl(unit.audio || `${base}.mp3`);
+      if (!audioUrl) continue;
+      record.units.push({
+        title: unit.title || titleFromBase(base),
+        filename: base,
+        fileKey: null,
+        lrcText: null,
+        audioUrl,
+        lrcUrl: toUrl(unit.lrc || `${base}.lrc`),
+      });
+      done += 1;
+      onProgress?.(done, rawUnits.length);
+    }
+    if (!record.units.length) throw new Error('book.json 中没有可用课程');
+
+    if (data.cover) {
+      const coverUrl = toUrl(data.cover);
+      if (coverUrl) record.coverUrl = coverUrl;
+    }
+
+    return this.#finalize(record);
+  }
+
+  /** book.json 书名优先级：URL 目录名 > name + level > name */
+  #bookJsonTitle(data, baseUrl) {
+    const segs = new URL(baseUrl).pathname.split('/').filter(Boolean);
+    const last = segs[segs.length - 1] || '';
+    const dirName = /\.json$/i.test(last) ? (segs[segs.length - 2] || '') : last;
+    const decoded = (() => {
+      try {
+        return decodeURIComponent(dirName);
+      } catch {
+        return dirName;
+      }
+    })();
+    if (decoded) return decoded;
+    return [data?.name, data?.level].filter(Boolean).join(' ') || this.#defaultTitle('URL 导入');
   }
 
   /** File 对象配对（按不含扩展名的基础名，忽略大小写） */
@@ -391,9 +492,9 @@ export class ImportService {
         id: index + 1,
         title: unit.title || `Unit ${index + 1}`,
       })),
-      coverUrl: '',
+      coverUrl: record.coverUrl || '',
       bookName: record.title,
-      bookLevel: '导入课本',
+      bookLevel: record.source === 'url-json' ? '远程课本' : '导入课本',
     };
   }
 
