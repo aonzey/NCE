@@ -1,6 +1,14 @@
-# 本地部署资源（junction 指向本地音频/歌词目录，不纳入版本库）
-resources/
-
 # 本地部署辅助脚本
 start_server.bat
-tools/
+tools/*
+!tools/gen_book_json.py
+
+# resources 目录结构（含 .gitkeep 与说明）纳入版本库，方便自行放入资料；
+# 但音频 / 歌词 / 封面 / 课程清单不入库，避免把大文件提交上去
+resources/**/*.mp3
+resources/**/*.lrc
+resources/**/*.jpg
+resources/**/*.jpeg
+resources/**/*.png
+resources/**/*.webp
+resources/**/book.json
