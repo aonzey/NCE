@@ -17,10 +17,12 @@ import {
 import { LRCParser } from './utils/LRCParser.js';
 import { BookService } from './services/BookService.js';
 import { PrefetchService } from './services/PrefetchService.js';
+import { ImportService } from './services/ImportService.js';
 import { AudioController } from './player/AudioController.js';
 import { LyricsView } from './ui/LyricsView.js';
 import { UnitView } from './ui/UnitView.js';
 import { Toast } from './ui/Toast.js';
+import { ImportPanel } from './ui/ImportPanel.js';
 
 const LOOP_MODE_LABELS = {
   off: '关闭循环',
@@ -86,6 +88,16 @@ export class ReadingSystem {
       onBookChange: (bookKey) => this.#onBookSelect(bookKey),
     });
 
+    this.importService = new ImportService();
+    this.importPanel = new ImportPanel({
+      triggerBtn: qs('#importBtn'),
+      panel: qs('#importPanel'),
+      importService: this.importService,
+      toast: (message, opts) => this.toast.show(message, opts),
+      onImported: (book) => this.#onBookImported(book),
+      onDeleted: (bookKey) => this.#onBookDeleted(bookKey),
+    });
+
     this.speedBtn = qs('#speedBtn');
     this.speedText = qs('#speedText');
     this.loopToggleBtn = qs('#loopToggleBtn');
@@ -113,12 +125,28 @@ export class ReadingSystem {
     try {
       this.#restorePreferences();
       this.state.books = await this.bookService.loadCatalog();
+      await this.#restoreImportedBooks();
       await this.applyBookFromHash();
       await this.loadUnitFromStorage();
     } catch (error) {
       if (error?.name === 'AbortError') return;
       console.error('Failed to initialize ReadingSystem:', error);
       this.lyricsView.setEmpty(this.config.ERROR_MESSAGES.LOAD_BOOKS);
+    }
+  }
+
+  /** 启动时恢复 IndexedDB 中的自定义课本，并入课本列表 */
+  async #restoreImportedBooks() {
+    try {
+      const customBooks = await this.importService.restoreAll();
+      if (!customBooks.length) return;
+      // 注意：state.books 与 bookService.books 是同一引用，去重后只 push 一次
+      for (const book of customBooks) {
+        if (this.state.books.some((b) => b.key === book.key)) continue;
+        this.state.books.push(book);
+      }
+    } catch (error) {
+      console.error('Failed to restore imported books:', error);
     }
   }
 
@@ -142,7 +170,7 @@ export class ReadingSystem {
 
     const resolved = this.bookService.resolve(bookKey, this.config.DEFAULT_BOOK_KEY);
     const resolvedPath = resolved?.path || resolved?.bookPath;
-    if (!resolvedPath) {
+    if (!resolvedPath && !resolved?.custom) {
       this.state.bookPath = '';
       this.state.bookKey = '';
       this.state.units = [];
@@ -153,7 +181,7 @@ export class ReadingSystem {
     }
 
     this.state.bookKey = resolved.key || bookKey;
-    this.state.bookPath = resolvedPath.trim().replace(/\/$/, '');
+    this.state.bookPath = (resolvedPath || '').trim().replace(/\/$/, '');
     setStorage(this.config.STORAGE_KEYS.BOOK_SELECTION, this.state.bookKey);
     this.unitView.renderBooks(this.state.books, this.state.bookKey);
     this.unitView.setBookMeta(resolved);
@@ -168,7 +196,9 @@ export class ReadingSystem {
     this.prefetch.clear();
 
     try {
-      const { units, coverUrl, bookName, bookLevel } = await this.bookService.loadBook(resolved, signal);
+      const { units, coverUrl, bookName, bookLevel } = resolved.custom
+        ? await this.importService.loadBook(resolved)
+        : await this.bookService.loadBook(resolved, signal);
       this.state.units = units;
       this.unitView.setCover(coverUrl);
       this.unitView.setBookMeta({
@@ -253,6 +283,7 @@ export class ReadingSystem {
     this.player.destroy();
     this.lyricsView.destroy();
     this.unitView.destroy();
+    this.importPanel?.destroy();
     this.prefetch.clear();
     this.toast.destroy();
   }
@@ -357,6 +388,49 @@ export class ReadingSystem {
   #onBookSelect(bookKey) {
     if (!bookKey || location.hash.slice(1) === bookKey) return;
     location.hash = bookKey;
+  }
+
+  /** 导入完成后切换到新书 */
+  #onBookImported(book) {
+    if (!book?.key) return;
+    if (!this.state.books.some((b) => b.key === book.key)) {
+      // state.books 与 bookService.books 同一引用，push 一次即可
+      this.state.books.push({ key: book.key, title: book.title, custom: true });
+    }
+    // 同步 hash（不触发 hashchange），保证刷新后仍停留在新书
+    if (location.hash.slice(1) !== book.key) {
+      history.replaceState(null, '', `#${book.key}`);
+    }
+    this.applyBookChange(book.key)
+      .then(() => this.loadUnitFromStorage())
+      .catch((error) => {
+        if (error?.name !== 'AbortError') {
+          console.error('Failed to switch to imported book:', error);
+        }
+      });
+  }
+
+  /** 删除导入课本后同步列表；若当前正在使用则回到默认课本 */
+  #onBookDeleted(bookKey) {
+    // state.books 与 bookService.books 是同一数组引用，必须原地过滤以保持共享
+    const books = this.state.books;
+    for (let i = books.length - 1; i >= 0; i -= 1) {
+      if (books[i]?.key === bookKey) books.splice(i, 1);
+    }
+    this.prefetch.clear();
+    // 删除的是非当前课本时不会走切换流程，需手动刷新下拉，否则残留已删除项
+    this.unitView.renderBooks(books, this.state.bookKey);
+
+    if (this.state.bookKey === bookKey) {
+      const fallback = this.config.DEFAULT_BOOK_KEY;
+      if (location.hash.slice(1) === fallback) {
+        this.applyBookChange(fallback)
+          .then(() => this.loadUnitFromStorage())
+          .catch(() => {});
+      } else {
+        location.hash = fallback; // hashchange 监听器会接管切换
+      }
+    }
   }
 
   #onUnitNavigate(value) {

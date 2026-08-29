@@ -70,7 +70,47 @@
       </div>
     </div>
     <div class="header-actions">
-      <a class="status-pill" href="https://ichochy.com" target="_blank" rel="noopener noreferrer">Blog</a>
+      <div class="import-wrap">
+        <button id="importBtn" class="status-pill import-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="importPanel" title="导入 mp3+lrc 学习资料">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 11V2M8 2L4.5 5.5M8 2L11.5 5.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M2 10.5V13C2 13.55 2.45 14 3 14H13C13.55 14 14 13.55 14 13V10.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+          <span>导入</span>
+        </button>
+        <div id="importPanel" class="import-panel" hidden>
+          <h3 class="import-title">导入 MP3 + LRC</h3>
+          <div class="import-actions">
+            <button type="button" class="import-action-btn" data-import="folder">
+              <span class="import-action-icon">📁</span>
+              <span>文件夹<br /><small>批量导入整个目录</small></span>
+            </button>
+            <button type="button" class="import-action-btn" data-import="files">
+              <span class="import-action-icon">📄</span>
+              <span>多选文件<br /><small>mp3 + lrc 任意组合</small></span>
+            </button>
+            <button type="button" class="import-action-btn" data-import="zip">
+              <span class="import-action-icon">🗜</span>
+              <span>ZIP 包<br /><small>压缩包内整套资料</small></span>
+            </button>
+          </div>
+          <div class="import-url-row">
+            <input id="importUrlInput" type="url" placeholder="资源目录或 ZIP 的 URL" spellcheck="false" />
+            <button id="importUrlBtn" type="button">导入</button>
+          </div>
+          <input id="importNameInput" class="import-name-input" type="text" placeholder="书名（可选，默认自动命名）" spellcheck="false" />
+          <div id="importProgress" class="import-progress" hidden>
+            <span class="import-status-text"></span>
+          </div>
+          <div class="import-books">
+            <h4 class="import-books-title">已导入课本</h4>
+            <div id="importBookList"></div>
+          </div>
+          <input id="importFolderInput" type="file" webkitdirectory directory multiple hidden />
+          <input id="importFilesInput" type="file" accept=".mp3,.lrc,audio/mpeg" multiple hidden />
+          <input id="importZipInput" type="file" accept=".zip,application/zip" hidden />
+        </div>
+      </div>
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="切换主题">
         <svg class="sun-icon" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <circle cx="10" cy="10" r="4" stroke="currentColor" stroke-width="1.5" />

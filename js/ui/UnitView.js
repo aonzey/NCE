@@ -54,7 +54,7 @@ export class UnitView {
    * @param {string} selectedKey
    */
   renderBooks(books, selectedKey) {
-    const valid = books.filter((book) => book?.key && book?.title && (book?.path || book?.bookPath));
+    const valid = books.filter((book) => book?.key && book?.title && (book?.path || book?.bookPath || book?.custom));
     this.bookSelects.forEach((select) => {
       fillSelect(select, valid, (book) => book.key, (book) => book.title, selectedKey);
     });
