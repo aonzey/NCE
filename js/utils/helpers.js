@@ -7,13 +7,19 @@ export const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 export function throttle(func, wait = 300) {
   let lastCall = 0;
-  return function throttled(...args) {
+  function throttled(...args) {
     const now = Date.now();
     if (now - lastCall >= wait) {
       lastCall = now;
       return func.apply(this, args);
     }
+    return undefined;
+  }
+  // 重置计时窗口；用于切换资源前丢弃旧的节流状态
+  throttled.cancel = () => {
+    lastCall = 0;
   };
+  return throttled;
 }
 
 export function debounce(func, wait = 300) {

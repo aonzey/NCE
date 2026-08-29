@@ -4,7 +4,7 @@
  */
 
 import { addClass, on, removeClass, setText, toggleClass } from '../utils/dom.js';
-import { clamp, formatTime, throttle } from '../utils/helpers.js';
+import { clamp, formatTime } from '../utils/helpers.js';
 
 export class AudioController {
   /**
@@ -34,6 +34,7 @@ export class AudioController {
 
     this.dragging = false;
     this.pendingTime = 0;
+    this.rafId = 0;
     this.abort = new AbortController();
 
     this.#bind();
@@ -49,6 +50,10 @@ export class AudioController {
 
   get paused() {
     return this.audio?.paused ?? true;
+  }
+
+  get playbackRate() {
+    return this.audio?.playbackRate ?? 1;
   }
 
   /**
@@ -153,8 +158,35 @@ export class AudioController {
   }
 
   destroy() {
+    this.#stopTicker();
     this.abort.abort();
     this.reset();
+  }
+
+  /**
+   * 逐帧驱动进度回调。
+   * timeupdate 只有约 4Hz，高倍速时两次回调之间的音频推进会被放大 N 倍
+   * （2x 约 500ms、3x 约 750ms），单句循环会越过句尾、漏出下一句开头。
+   * 改用 rAF（约 60fps）把误差压到 16ms 量级。
+   */
+  #startTicker() {
+    if (this.rafId) return;
+    const loop = () => {
+      this.rafId = requestAnimationFrame(loop);
+      if (this.paused) {
+        this.#stopTicker();
+        return;
+      }
+      this.updateProgress();
+      this.onTick?.(this.currentTime, this.duration);
+    };
+    this.rafId = requestAnimationFrame(loop);
+  }
+
+  #stopTicker() {
+    if (!this.rafId) return;
+    cancelAnimationFrame(this.rafId);
+    this.rafId = 0;
   }
 
   #bind() {
@@ -209,11 +241,12 @@ export class AudioController {
 
     if (!this.audio) return;
 
-    const tick = throttle(() => {
+    const tick = () => {
       this.updateProgress();
       this.onTick?.(this.currentTime, this.duration);
-    }, 1000 / 30);
+    };
 
+    // 兜底：后台标签页 rAF 会被冻结，此时仍靠 timeupdate 维持基本同步
     on(this.audio, 'timeupdate', tick, { signal });
     on(this.audio, 'loadedmetadata', () => {
       // 兜底：部分浏览器在加载新资源后仍可能将速率归 1
@@ -224,16 +257,25 @@ export class AudioController {
     }, { signal });
     on(this.audio, 'canplay', () => this.setDisabled(false), { signal });
     on(this.audio, 'loadstart', () => this.setDisabled(true), { signal });
-    on(this.audio, 'play', () => this.updatePlayButton(), { signal });
+    on(this.audio, 'play', () => {
+      this.updatePlayButton();
+      this.#startTicker();
+    }, { signal });
     on(this.audio, 'pause', () => {
       this.updatePlayButton();
+      this.#stopTicker();
+      tick();
       this.onPersist?.(this.currentTime);
     }, { signal });
     on(this.audio, 'ended', () => {
       this.updatePlayButton();
+      this.#stopTicker();
+      tick();
       this.onEnded?.();
     }, { signal });
     on(this.audio, 'error', () => this.setDisabled(true), { signal });
+
+    if (!this.paused) this.#startTicker();
   }
 
   #applyPendingTime() {
