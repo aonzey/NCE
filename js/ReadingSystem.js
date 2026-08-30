@@ -179,7 +179,7 @@ export class ReadingSystem {
       this.state.units = [];
       this.unitView.clearUnits();
       this.unitView.setBookMeta(null);
-      this.lyricsView.setEmpty(this.config.ERROR_MESSAGES.NO_DATA);
+      this.#showImportPrompt(this.config.ERROR_MESSAGES.NO_DATA);
       return;
     }
 
@@ -211,13 +211,19 @@ export class ReadingSystem {
       });
       this.unitView.renderUnits(units);
       this.unitView.resetListScroll();
+
+      // 拉取成功但一门课都没有（镜像目录为空）：同样引导用户导入
+      if (!units.length) {
+        this.#showImportPrompt(`「${bookName || this.state.bookKey}」暂时没有可用课程`);
+      }
     } catch (error) {
       if (error?.name === 'AbortError') throw error;
       console.error(this.config.ERROR_MESSAGES.LOAD_CONFIG, error);
       this.state.units = [];
       this.unitView.clearUnits();
-      this.lyricsView.setEmpty(
-        `${this.config.ERROR_MESSAGES.LOAD_CONFIG}: ${this.state.bookPath}/book.json`
+      // 默认课本拉不到（离线 / 镜像不可用）：引导导入，而不是只丢一句看不懂的报错
+      this.#showImportPrompt(
+        `${this.config.ERROR_MESSAGES.LOAD_CONFIG}：${this.state.bookPath}/book.json`
       );
     }
   }
@@ -451,6 +457,23 @@ export class ReadingSystem {
         location.hash = fallback; // hashchange 监听器会接管切换
       }
     }
+  }
+
+  /**
+   * 默认课本拿不到内容时（离线 / 镜像不可用 / 目录为空），
+   * 明确引导用户去点「导入」按钮加载自己的资料，而不是只丢一句看不懂的报错。
+   * @param {string} reason 具体原因，会展示在提示文字里
+   */
+  #showImportPrompt(reason) {
+    this.lyricsView.setEmpty(
+      `${reason}\n可以导入自己的 MP3 + LRC 开始学习。`,
+      { label: '导入学习资料', onClick: () => this.#openImportPanel() }
+    );
+  }
+
+  /** 打开导入面板：复用导入按钮自身的开合逻辑（含 aria-expanded、点击外部关闭） */
+  #openImportPanel() {
+    this.importPanel?.triggerBtn?.click();
   }
 
   #onUnitNavigate(value) {

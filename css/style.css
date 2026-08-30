@@ -1398,6 +1398,44 @@ body.blur-translation .lyric-line:hover .lyric-text {
   font-weight: 500;
 }
 
+/* 空状态引导：默认课本拿不到内容时，提示用户去点「导入」 */
+.placeholder-guide {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 48px 20px;
+}
+
+.placeholder-guide .placeholder {
+  padding: 0;
+  /* 文案里带换行，保留它而不是被折叠成一行 */
+  white-space: pre-line;
+  line-height: 1.8;
+}
+
+.placeholder-btn {
+  padding: 10px 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-1);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+}
+
+.placeholder-btn:hover {
+  border-color: var(--accent-1);
+  color: var(--accent-1);
+}
+
+.placeholder-btn:active {
+  transform: scale(0.97);
+}
+
 .lyric-line {
   padding: 5px 10px;
   border-radius: 12px;
