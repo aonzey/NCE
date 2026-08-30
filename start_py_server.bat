@@ -26,6 +26,6 @@ if not defined FOUND (
 )
 
 echo Starting NCE local server at http://127.0.0.1:%PORT% ...
-start "" http://127.0.0.1:%PORT%
+rem 浏览器由 server.py 在服务真正监听后再打开，避免"还没起来就访问"的空白页
 rem Custom server sends Cache-Control: no-cache so browser never serves stale js/css
 "%PY%" tools\server.py %PORT%

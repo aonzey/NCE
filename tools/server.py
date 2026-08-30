@@ -1,13 +1,52 @@
+import argparse
 import os
 import re
+import socket
 import sys
+import threading
+import webbrowser
 from email.utils import mktime_tz, parsedate_tz
 from functools import partial
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, urlunsplit
 
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
+def _default_port():
+    """兼容老的调用方式 `server.py 8080`。
+
+    这里不能直接 int(sys.argv[1])：像 --no-browser、--help 这种非数字参数
+    会在模块加载阶段就抛 ValueError 直接崩掉，连 argparse 都跑不到。
+    非数字参数一律回退到 8080，交由下面的 argparse 统一处理。
+    """
+    if len(sys.argv) > 1:
+        try:
+            return int(sys.argv[1])
+        except ValueError:
+            pass
+    return 8080
+
+
+PORT = _default_port()
+
+
+def project_root():
+    """返回要对外提供服务的目录（项目根目录，含 index.html / data.json）。
+
+    - 打包成 exe（PyInstaller --onefile）时：以 exe 文件所在目录为准。
+      这样无论从哪个工作目录双击或启动，都能正确读到页面与音频，
+      而不是解压到临时目录里的 _MEIPASS。
+    - 以源码方式运行（python tools/server.py）时：取 tools/ 的上一级目录，
+      即项目根目录，与过去 `cd 项目根目录` 再启动的行为一致。
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+ROOT = project_root()
+
+# 只监听本机回环地址，外部机器访问不到，避免把本地资料暴露到局域网
+BIND_HOST = "127.0.0.1"
 
 # 开发用文件：禁止缓存，改完刷新即生效
 NO_CACHE_EXT = {".html", ".htm", ".js", ".mjs", ".css", ".json", ".map"}
@@ -236,15 +275,124 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             raise
 
 
+class NCEServer(ThreadingHTTPServer):
+    """关闭 allow_reuse_address 的 ThreadingHTTPServer。
+
+    http.server 默认 allow_reuse_address=1（为的是重启时避开 TIME_WAIT），
+    但在 Windows 上该选项的语义不同：它允许多个进程绑定同一个端口且bind 成功，
+    结果是两个服务器同时"监听"同一端口，请求被随机分发，
+    端口占用检测也就永远不会触发。这里关掉它，让"端口真的被占用"时
+    bind 直接失败，从而正确走到下面的自动顺延逻辑。
+    """
+
+    allow_reuse_address = False
+    daemon_threads = True
+
+
+def port_in_use(port, host="127.0.0.1", timeout=0.35):
+    """先探一次：能不能连上该端口。能连上说明已有服务在跑（含上一次没退出的）。"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
+        return sock.connect_ex((host, port)) == 0
+
+
+def bind_server(port, handler, max_tries=20):
+    """从 port 起依次尝试绑定，端口被占用时自动顺延，返回 (server, 实际端口)。"""
+    last_err = None
+    for candidate in range(port, port + max_tries):
+        if port_in_use(candidate):
+            last_err = "端口 %d 已有服务在监听" % candidate
+            continue
+        try:
+            # HTTPServer 在构造时就会 bind，端口占用会抛 OSError
+            server = NCEServer((BIND_HOST, candidate), handler)
+            return server, candidate
+        except OSError as exc:
+            last_err = exc
+    raise SystemExit(
+        "无法绑定端口 %d~%d（均被占用或无权限）。\n最后一个错误：%s"
+        % (port, port + max_tries - 1, last_err)
+    )
+
+
+def open_browser_later(url, delay=0.6):
+    """等服务器真正 listen 之后再开浏览器，避免出现“无法访问”的空白页。"""
+    def _open():
+        try:
+            webbrowser.open(url)
+        except Exception as exc:  # 打不开也不影响服务本身
+            sys.stderr.write("[nce] 打开浏览器失败：%s\n" % exc)
+
+    threading.Timer(delay, _open).start()
+
+
+def configure_console():
+    """保证中文提示在任何语言的 Windows 上都能正常显示，且不会因为编码直接崩溃。
+
+    Python 往控制台输出时用的是系统区域编码（中文 Windows 是 GBK，
+    英文 Windows 可能是 cp1252 / cp437）。直接 print 中文在非中文系统上会抛
+    UnicodeEncodeError，导致程序一启动就崩——而本程序正是要分发给
+    "没有 Python 的电脑"使用，必须避免这种环境差异。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            # 65001 = UTF-8 代码页，让控制台能正确显示中文
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            ctypes.windll.kernel32.SetConsoleCP(65001)
+        except Exception:
+            pass
+
+
 def main():
-    handler = partial(NoCacheHandler, directory=".")
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), handler)
+    configure_console()
+
+    parser = argparse.ArgumentParser(
+        description="NCE 新概念英语点读系统 - 本地服务器（支持 Range / 304）"
+    )
+    parser.add_argument("port", nargs="?", type=int, default=PORT,
+                        help="监听端口，默认 %d" % PORT)
+    parser.add_argument("--no-browser", action="store_true",
+                        help="启动后不自动打开浏览器")
+    args = parser.parse_args()
+
+    handler = partial(NoCacheHandler, directory=ROOT)
+    server, port = bind_server(args.port, handler)
     server.daemon_threads = True
-    print("NCE server listening on http://127.0.0.1:%d (Range + 304: supported)" % PORT)
+
+    url = "http://%s:%d/" % (BIND_HOST, port)
+    print("=" * 58)
+    print("  NCE 新概念英语点读系统 - 本地服务已启动")
+    print("")
+    print("  访问地址 : %s" % url)
+    print("  服务目录 : %s" % ROOT)
+    print("  能力     : Range 断点续传 / 304 缓存协商：已开启")
+    if port != args.port:
+        print("  注意     : 端口 %d 被占用，已自动改用 %d" % (args.port, port))
+    if not os.path.isfile(os.path.join(ROOT, "index.html")):
+        # 双击 exe 时目录以 exe 所在位置为准，放错位置会给个明确提示，
+        # 而不是让人对着一个目录列表发懵
+        print("  警告     : 该目录下没有 index.html，页面可能打不开。")
+        print("             请把本程序放在项目根目录（与 index.html 同级）后重新运行。")
+    print("")
+    print("  停止服务 : 直接关闭本窗口，或按 Ctrl+C")
+    print("=" * 58)
+    sys.stdout.flush()
+
+    if not args.no_browser:
+        open_browser_later(url)
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        pass
+        print("\n[nce] 已停止服务。")
     finally:
         server.server_close()
 

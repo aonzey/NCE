@@ -10,3 +10,15 @@ resources/**/*.jpeg
 resources/**/*.png
 resources/**/*.webp
 resources/**/book.json
+
+# 打包产物：NCE-Server.exe 由 tools/build_exe.py 生成（约 9MB 的二进制）。
+# 默认不入库，避免每次重新打包都往 Git 历史里塞大文件；
+# 如果希望别人 clone 后直接拿到 exe，删掉下面这行并提交即可。
+NCE-Server.exe
+
+# PyInstaller / Python 中间产物
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
