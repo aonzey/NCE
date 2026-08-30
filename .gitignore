@@ -1,7 +1,5 @@
 # 本地部署辅助脚本
-start_server.bat
-tools/*
-!tools/gen_book_json.py
+
 
 # resources 目录结构（含 .gitkeep 与说明）纳入版本库，方便自行放入资料；
 # 但音频 / 歌词 / 封面 / 课程清单不入库，避免把大文件提交上去
