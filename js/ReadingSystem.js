@@ -5,7 +5,7 @@
 
 import { CONFIG, createInitialState } from './config.js';
 import { qs, qsa, on, setText, toggleClass } from './utils/dom.js';
-import { clamp, debounce } from './utils/helpers.js';
+import { clamp, throttle } from './utils/helpers.js';
 import {
   getStorage,
   setStorage,
@@ -17,10 +17,12 @@ import {
 import { LRCParser } from './utils/LRCParser.js';
 import { BookService } from './services/BookService.js';
 import { PrefetchService } from './services/PrefetchService.js';
+import { ImportService } from './services/ImportService.js';
 import { AudioController } from './player/AudioController.js';
 import { LyricsView } from './ui/LyricsView.js';
 import { UnitView } from './ui/UnitView.js';
 import { Toast } from './ui/Toast.js';
+import { ImportPanel } from './ui/ImportPanel.js';
 
 const LOOP_MODE_LABELS = {
   off: '关闭循环',
@@ -51,7 +53,9 @@ export class ReadingSystem {
     this.unitAbort = null;
     this.unitLoadId = 0;
     this.ready = false;
-    this.persistProgress = debounce(() => this.#saveProgress(), 1500);
+    // 进度回调已改为逐帧触发，这里必须用节流而非防抖：
+    // 防抖会被每帧调用无限推迟，导致播放过程中的进度一次都不落盘
+    this.persistProgress = throttle(() => this.#saveProgress(), 2000);
 
     this.player = new AudioController({
       audio: qs('#audioPlayer'),
@@ -86,6 +90,16 @@ export class ReadingSystem {
       onBookChange: (bookKey) => this.#onBookSelect(bookKey),
     });
 
+    this.importService = new ImportService();
+    this.importPanel = new ImportPanel({
+      triggerBtn: qs('#importBtn'),
+      panel: qs('#importPanel'),
+      importService: this.importService,
+      toast: (message, opts) => this.toast.show(message, opts),
+      onImported: (book) => this.#onBookImported(book),
+      onDeleted: (bookKey) => this.#onBookDeleted(bookKey),
+    });
+
     this.speedBtn = qs('#speedBtn');
     this.speedText = qs('#speedText');
     this.loopToggleBtn = qs('#loopToggleBtn');
@@ -96,6 +110,7 @@ export class ReadingSystem {
     this.toggleTranslationBtn = qs('#toggleTranslationBtn');
     this.lyricSizeBtn = qs('#lyricSizeBtn');
     this.lyricSizeText = qs('#lyricSizeText');
+    this.lyricSizePanel = qs('#lyricSizePanel');
     this.lyricsContainerEl = qs('.lyrics-container');
 
     this.sentenceRestartTimer = null;
@@ -113,12 +128,28 @@ export class ReadingSystem {
     try {
       this.#restorePreferences();
       this.state.books = await this.bookService.loadCatalog();
+      await this.#restoreImportedBooks();
       await this.applyBookFromHash();
       await this.loadUnitFromStorage();
     } catch (error) {
       if (error?.name === 'AbortError') return;
       console.error('Failed to initialize ReadingSystem:', error);
       this.lyricsView.setEmpty(this.config.ERROR_MESSAGES.LOAD_BOOKS);
+    }
+  }
+
+  /** 启动时恢复 IndexedDB 中的自定义课本，并入课本列表 */
+  async #restoreImportedBooks() {
+    try {
+      const customBooks = await this.importService.restoreAll();
+      if (!customBooks.length) return;
+      // 注意：state.books 与 bookService.books 是同一引用，去重后只 push 一次
+      for (const book of customBooks) {
+        if (this.state.books.some((b) => b.key === book.key)) continue;
+        this.state.books.push(book);
+      }
+    } catch (error) {
+      console.error('Failed to restore imported books:', error);
     }
   }
 
@@ -142,7 +173,7 @@ export class ReadingSystem {
 
     const resolved = this.bookService.resolve(bookKey, this.config.DEFAULT_BOOK_KEY);
     const resolvedPath = resolved?.path || resolved?.bookPath;
-    if (!resolvedPath) {
+    if (!resolvedPath && !resolved?.custom) {
       this.state.bookPath = '';
       this.state.bookKey = '';
       this.state.units = [];
@@ -153,7 +184,7 @@ export class ReadingSystem {
     }
 
     this.state.bookKey = resolved.key || bookKey;
-    this.state.bookPath = resolvedPath.trim().replace(/\/$/, '');
+    this.state.bookPath = (resolvedPath || '').trim().replace(/\/$/, '');
     setStorage(this.config.STORAGE_KEYS.BOOK_SELECTION, this.state.bookKey);
     this.unitView.renderBooks(this.state.books, this.state.bookKey);
     this.unitView.setBookMeta(resolved);
@@ -168,7 +199,9 @@ export class ReadingSystem {
     this.prefetch.clear();
 
     try {
-      const { units, coverUrl, bookName, bookLevel } = await this.bookService.loadBook(resolved, signal);
+      const { units, coverUrl, bookName, bookLevel } = resolved.custom
+        ? await this.importService.loadBook(resolved)
+        : await this.bookService.loadBook(resolved, signal);
       this.state.units = units;
       this.unitView.setCover(coverUrl);
       this.unitView.setBookMeta({
@@ -253,6 +286,7 @@ export class ReadingSystem {
     this.player.destroy();
     this.lyricsView.destroy();
     this.unitView.destroy();
+    this.importPanel?.destroy();
     this.prefetch.clear();
     this.toast.destroy();
   }
@@ -264,7 +298,10 @@ export class ReadingSystem {
     on(this.loopToggleBtn, 'click', () => this.#cycleLoopMode(), { signal });
     on(this.toggleTranslationBtn, 'click', () => this.#cycleTranslation(), { signal });
     if (this.lyricSizeBtn) {
-      on(this.lyricSizeBtn, 'click', () => this.#cycleLyricSize(), { signal });
+      on(this.lyricSizeBtn, 'click', (event) => {
+        event.stopPropagation();
+        this.#toggleLyricSizePanel();
+      }, { signal });
     }
 
     if (this.loopSettingsBtn) {
@@ -289,6 +326,20 @@ export class ReadingSystem {
       on(document, 'keydown', (event) => {
         if (event.key === 'Escape' && !this.loopSettingsPanel.hidden) {
           this.#toggleLoopSettings(false);
+        }
+      }, { signal });
+    }
+    if (this.lyricSizePanel) {
+      this.#renderLyricSizeOptions();
+      on(document, 'click', (event) => {
+        if (this.lyricSizePanel.hidden) return;
+        if (this.lyricSizePanel.contains(event.target)) return;
+        if (this.lyricSizeBtn?.contains(event.target)) return;
+        this.#toggleLyricSizePanel(false);
+      }, { signal });
+      on(document, 'keydown', (event) => {
+        if (event.key === 'Escape' && !this.lyricSizePanel.hidden) {
+          this.#toggleLyricSizePanel(false);
         }
       }, { signal });
     }
@@ -357,6 +408,49 @@ export class ReadingSystem {
   #onBookSelect(bookKey) {
     if (!bookKey || location.hash.slice(1) === bookKey) return;
     location.hash = bookKey;
+  }
+
+  /** 导入完成后切换到新书 */
+  #onBookImported(book) {
+    if (!book?.key) return;
+    if (!this.state.books.some((b) => b.key === book.key)) {
+      // state.books 与 bookService.books 同一引用，push 一次即可
+      this.state.books.push({ key: book.key, title: book.title, custom: true });
+    }
+    // 同步 hash（不触发 hashchange），保证刷新后仍停留在新书
+    if (location.hash.slice(1) !== book.key) {
+      history.replaceState(null, '', `#${book.key}`);
+    }
+    this.applyBookChange(book.key)
+      .then(() => this.loadUnitFromStorage())
+      .catch((error) => {
+        if (error?.name !== 'AbortError') {
+          console.error('Failed to switch to imported book:', error);
+        }
+      });
+  }
+
+  /** 删除导入课本后同步列表；若当前正在使用则回到默认课本 */
+  #onBookDeleted(bookKey) {
+    // state.books 与 bookService.books 是同一数组引用，必须原地过滤以保持共享
+    const books = this.state.books;
+    for (let i = books.length - 1; i >= 0; i -= 1) {
+      if (books[i]?.key === bookKey) books.splice(i, 1);
+    }
+    this.prefetch.clear();
+    // 删除的是非当前课本时不会走切换流程，需手动刷新下拉，否则残留已删除项
+    this.unitView.renderBooks(books, this.state.bookKey);
+
+    if (this.state.bookKey === bookKey) {
+      const fallback = this.config.DEFAULT_BOOK_KEY;
+      if (location.hash.slice(1) === fallback) {
+        this.applyBookChange(fallback)
+          .then(() => this.loadUnitFromStorage())
+          .catch(() => {});
+      } else {
+        location.hash = fallback; // hashchange 监听器会接管切换
+      }
+    }
   }
 
   #onUnitNavigate(value) {
@@ -436,7 +530,10 @@ export class ReadingSystem {
     if (!boundaries || !Number.isFinite(boundaries.startTime)) return;
 
     const endTime = boundaries.endTime;
-    if (currentTime < endTime) return;
+    if (!Number.isFinite(endTime)) return;
+    // 提前量：抵消帧间隔与 seek 延迟（二者换算到音频时间都会被倍速放大），
+    // 避免真正越过句尾、漏出下一句开头
+    if (currentTime + this.#sentenceLead(endTime - boundaries.startTime) < endTime) return;
 
     if (this.state.loopMode === 'click') {
       const loopCount = this.state.loopCount;
@@ -481,6 +578,19 @@ export class ReadingSystem {
     this.state.sentenceRepeatCount += 1;
     this.#restartSentence(boundaries.startTime);
     this.#setHighlight(locked);
+  }
+
+  /**
+   * 句尾检测的提前量（秒）：在真正到达 endTime 之前就跳回句首。
+   * 检测以 rAF 逐帧进行，帧间隔乘以倍速就是最坏情况下的越界长度，
+   * 再叠加一点余量覆盖 seek 的解码延迟。
+   * @param {number} span 句子时长，避免提前量吃掉过短的句子
+   */
+  #sentenceLead(span) {
+    const rate = Math.max(1, Number(this.player.playbackRate) || 1);
+    const lead = 0.02 + rate * 0.02;
+    const safe = Number.isFinite(span) && span > 0 ? Math.min(lead, span * 0.25) : lead;
+    return Math.min(safe, 0.2);
   }
 
   /**
@@ -667,13 +777,21 @@ export class ReadingSystem {
     this.toast.show(TRANSLATION_LABELS[this.state.translationMode]);
   }
 
-  /** 歌词字号档位文案 */
+  /**
+   * 预览字号：按钮上的 A 与面板选项文字共用。
+   * 系数需保守，否则最大档会把固定尺寸的控制按钮撑变形。
+   */
+  #previewFontSize(scale) {
+    return `${(14 + (scale - 1) * 6).toFixed(1)}px`;
+  }
+
+  /** 歌词字号档位文案（阈值需与 LYRIC_SCALE_OPTIONS 的取值范围匹配） */
   #lyricScaleLabel() {
     const scale = Number(this.state.lyricScale) || 1;
     if (scale < 0.9) return '小';
-    if (scale < 1.05) return '标准';
-    if (scale < 1.2) return '大';
-    if (scale < 1.4) return '特大';
+    if (scale < 1.15) return '标准';
+    if (scale < 1.7) return '大';
+    if (scale < 2.5) return '特大';
     return '最大';
   }
 
@@ -687,15 +805,66 @@ export class ReadingSystem {
       toggleClass(this.lyricSizeBtn, 'active', scale !== 1);
     }
     if (this.lyricSizeText) {
-      this.lyricSizeText.style.fontSize = `${(15 + (scale - 1) * 10).toFixed(1)}px`;
+      this.lyricSizeText.style.fontSize = this.#previewFontSize(scale);
     }
   }
 
-  #cycleLyricSize() {
+  /** 渲染字号选项面板；选项文字本身按档位缩放，便于直观预览 */
+  #renderLyricSizeOptions() {
     const options = this.config.LYRIC_SCALE_OPTIONS;
-    const currentIndex = options.indexOf(this.state.lyricScale);
-    this.state.lyricScale = options[(currentIndex + 1) % options.length];
-    setStorage(this.config.STORAGE_KEYS.LYRIC_SCALE, this.state.lyricScale);
+    const labels = this.config.LYRIC_SCALE_LABELS;
+    const { signal } = this.abort;
+    this.lyricSizePanel.replaceChildren();
+    options.forEach((scale, index) => {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'lyric-size-option';
+      option.dataset.scale = String(scale);
+
+      const name = document.createElement('span');
+      name.className = 'lyric-size-option-name';
+      name.textContent = labels[index] || `${scale}x`;
+      // 预览字号：与按钮上的 A 同步缩放
+      name.style.fontSize = this.#previewFontSize(scale);
+
+      const value = document.createElement('span');
+      value.className = 'lyric-size-option-value';
+      value.textContent = `${scale}x`;
+
+      option.append(name, value);
+      this.lyricSizePanel.appendChild(option);
+
+      on(option, 'click', () => {
+        this.#setLyricScale(scale);
+        this.#toggleLyricSizePanel(false);
+      }, { signal });
+    });
+  }
+
+  /** 切换字号面板显示 */
+  #toggleLyricSizePanel(force) {
+    if (!this.lyricSizePanel || !this.lyricSizeBtn) return;
+    const show = typeof force === 'boolean' ? force : this.lyricSizePanel.hidden;
+    this.lyricSizePanel.hidden = !show;
+    this.lyricSizeBtn.setAttribute('aria-expanded', show ? 'true' : 'false');
+    if (show) this.#syncLyricSizeOptions();
+  }
+
+  /** 面板打开时同步当前档位的高亮 */
+  #syncLyricSizeOptions() {
+    if (!this.lyricSizePanel) return;
+    const current = Number(this.state.lyricScale) || 1;
+    this.lyricSizePanel.querySelectorAll('.lyric-size-option').forEach((option) => {
+      const active = Number(option.dataset.scale) === current;
+      option.classList.toggle('active', active);
+      option.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+
+  #setLyricScale(scale) {
+    if (!Number.isFinite(scale)) return;
+    this.state.lyricScale = scale;
+    setStorage(this.config.STORAGE_KEYS.LYRIC_SCALE, scale);
     this.#applyLyricScale();
     this.toast.show(`字号：${this.#lyricScaleLabel()}`);
   }

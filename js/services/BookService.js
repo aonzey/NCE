@@ -34,15 +34,15 @@ export class BookService {
   resolve(bookKey, defaultKey) {
     if (!this.books.length) return null;
 
-    const getPath = (book) => book?.path || '';
+    const isUsable = (book) => Boolean(book?.path || book?.bookPath || book?.custom);
 
-    const exact = this.books.find((book) => book?.key === bookKey && getPath(book));
+    const exact = this.books.find((book) => book?.key === bookKey && isUsable(book));
     if (exact) return exact;
 
-    const fallback = this.books.find((book) => book?.key === defaultKey && getPath(book));
+    const fallback = this.books.find((book) => book?.key === defaultKey && isUsable(book));
     if (fallback) return fallback;
 
-    return this.books.find((book) => getPath(book)) || null;
+    return this.books.find(isUsable) || null;
   }
 
   /**
