@@ -197,6 +197,18 @@ export class AudioController {
         if (!this.paused) this.onUserPause?.();
         this.toggle();
       }, { signal });
+
+      // 空格键控制播放/暂停：聚焦在输入框等可编辑元素时不拦截，避免影响输入；
+      // 播放按钮自身聚焦时交给原生行为处理，避免重复切换
+      on(document, 'keydown', (event) => {
+        if (event.code !== 'Space') return;
+        const target = event.target;
+        if (target === this.playBtn) return;
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+        event.preventDefault();
+        if (!this.paused) this.onUserPause?.();
+        this.toggle();
+      }, { signal });
     }
 
     if (this.progressBar) {
