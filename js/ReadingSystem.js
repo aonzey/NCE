@@ -116,6 +116,8 @@ export class ReadingSystem {
     this.sentenceRestartTimer = null;
     this.sentenceLoopToken = 0;
     this.pendingRestartStartTime = 0;
+    // 句尾触发的「单次」标记：一次句尾只允许处理一次，详见 #handleSentence
+    this.sentenceEndArmed = true;
 
     this.toast = new Toast();
 
@@ -252,6 +254,7 @@ export class ReadingSystem {
     this.state.currentLyricIndex = -1;
     this.state.sentenceLoopIndex = -1;
     this.state.sentenceRepeatCount = 1;
+    this.sentenceEndArmed = true;
     this.#cancelSentenceRestart();
     this.state.currentLyrics = [];
     saveCurrentUnitIndex(this.state.bookKey, unitIndex);
@@ -502,6 +505,7 @@ export class ReadingSystem {
       this.state.sentenceLoopIndex = index;
       this.state.sentenceRepeatCount = 1;
     }
+    this.sentenceEndArmed = true;
     this.#setHighlight(index);
     this.player.seek(time);
     this.player.play();
@@ -536,6 +540,7 @@ export class ReadingSystem {
     if (locked < 0 && this.state.loopMode === 'one' && index >= 0 && index !== this.state.currentLyricIndex) {
       this.state.sentenceLoopIndex = index;
       this.state.sentenceRepeatCount = 1;
+      this.sentenceEndArmed = true;
     }
 
     this.#setHighlight(index);
@@ -554,9 +559,20 @@ export class ReadingSystem {
 
     const endTime = boundaries.endTime;
     if (!Number.isFinite(endTime)) return;
-    // 提前量：抵消帧间隔与 seek 延迟（二者换算到音频时间都会被倍速放大），
-    // 避免真正越过句尾、漏出下一句开头
-    if (currentTime + this.#sentenceLead(endTime - boundaries.startTime) < endTime) return;
+    const lead = this.#sentenceLead(endTime - boundaries.startTime);
+    if (currentTime + lead < endTime) {
+      // 还在句内：重新武装，允许下一次句尾触发
+      this.sentenceEndArmed = true;
+      return;
+    }
+
+    // 同一次句尾只能处理一次。
+    // 回跳本身是异步的（seek 需要解码/缓冲，播放在线音频时更久），而且在设置了
+    // 循环间隔时 #restartSentence 会先 pause()，pause 事件回调又会再跑一次进度
+    // 回调；这些回调读到的 currentTime 都还停在句尾。若不加以区分就会被重复计数，
+    // 表现为「设置循环 3 次实际只播 2 次，次数设得越大差得越多」。
+    if (!this.sentenceEndArmed) return;
+    this.sentenceEndArmed = false;
 
     if (this.state.loopMode === 'click') {
       const loopCount = this.state.loopCount;
@@ -689,6 +705,7 @@ export class ReadingSystem {
     if (nextMode === 'list' || nextMode === 'off' || nextMode === 'book') {
       this.state.sentenceLoopIndex = -1;
       this.state.sentenceRepeatCount = 0;
+      this.sentenceEndArmed = true;
       this.#cancelSentenceRestart();
     }
 
