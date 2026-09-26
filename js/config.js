@@ -3,6 +3,13 @@
  * @module config
  */
 
+/**
+ * 「间隔时间」的特殊取值：按句子自身时长停顿
+ * 之所以用负数，是为了和「固定秒数」共用一个数字字段且不产生歧义
+ * @type {number}
+ */
+export const SENTENCE_LENGTH_INTERVAL = -1;
+
 export const CONFIG = {
   DEFAULT_BOOK_KEY: 'YL5A',
 
@@ -25,9 +32,13 @@ export const CONFIG = {
   LOOP_COUNT_OPTIONS: [0, 2, 3, 5, 10],
   /**
    * 单句循环间隔时间选项（单位：秒）
+   * 特殊值 SENTENCE_LENGTH_INTERVAL（-1）：停顿时长取当前句子自身时长，
+   * 即该句 LRC 前后时间标签之差
    * @type {number[]}
    */
-  LOOP_INTERVAL_OPTIONS: [0, 0.5, 1, 2, 3],
+  LOOP_INTERVAL_OPTIONS: [0, 0.5, 1, 2, 3, -1],
+  /** 「间隔时间」下拉框显示名，与 LOOP_INTERVAL_OPTIONS 一一对应 */
+  LOOP_INTERVAL_LABELS: ['0 秒（无间隔）', '0.5 秒', '1 秒', '2 秒', '3 秒', '各句子本身时长'],
   TRANSLATION_MODES: ['show', 'english', 'chinese', 'blur'],
   LOOP_MODES: ['off', 'click', 'one', 'list', 'book'],
   /**

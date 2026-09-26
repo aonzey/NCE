@@ -3,7 +3,7 @@
  * @module ReadingSystem
  */
 
-import { CONFIG, createInitialState } from './config.js';
+import { CONFIG, createInitialState, SENTENCE_LENGTH_INTERVAL } from './config.js';
 import { qs, qsa, on, setText, toggleClass } from './utils/dom.js';
 import { clamp, throttle } from './utils/helpers.js';
 import {
@@ -116,6 +116,9 @@ export class ReadingSystem {
     this.sentenceRestartTimer = null;
     this.sentenceLoopToken = 0;
     this.pendingRestartStartTime = 0;
+    // 待重启句子的自身时长（秒）。间隔选「各句子本身时长」时用它算停顿，
+    // 期间若用户改了设置需要重算定时器，所以必须和 startTime 一起记住
+    this.pendingRestartSpan = 0;
     // 句尾触发的「单次」标记：一次句尾只允许处理一次，详见 #handleSentence
     this.sentenceEndArmed = true;
 
@@ -600,7 +603,7 @@ export class ReadingSystem {
 
       // 未达到次数：按间隔时间继续重播
       this.state.sentenceRepeatCount += 1;
-      this.#restartSentence(boundaries.startTime);
+      this.#restartSentence(boundaries.startTime, boundaries.endTime - boundaries.startTime);
       this.#setHighlight(locked);
       return;
     }
@@ -615,7 +618,7 @@ export class ReadingSystem {
     }
 
     this.state.sentenceRepeatCount += 1;
-    this.#restartSentence(boundaries.startTime);
+    this.#restartSentence(boundaries.startTime, boundaries.endTime - boundaries.startTime);
     this.#setHighlight(locked);
   }
 
@@ -633,13 +636,35 @@ export class ReadingSystem {
   }
 
   /**
+   * 计算本次重播前的停顿毫秒数
+   * @param {number} span 当前句子自身时长（秒），间隔选「各句子本身时长」时使用
+   * @returns {number}
+   */
+  #resolveIntervalMs(span) {
+    const setting = Number(this.state.loopInterval);
+    if (!Number.isFinite(setting)) return 0;
+
+    // 「各句子本身时长」：停顿 = 该句 LRC 前后时间标签之差。
+    // 这里按原始时间差计时、不随倍速缩放 —— 倍速提高后音频变短，
+    // 留给跟读的时间反而应该保持充裕
+    if (setting === SENTENCE_LENGTH_INTERVAL) {
+      const sentenceSpan = Number(span);
+      return Number.isFinite(sentenceSpan) && sentenceSpan > 0 ? sentenceSpan * 1000 : 0;
+    }
+
+    return Math.max(0, setting) * 1000;
+  }
+
+  /**
    * 将当前句子跳回起点重新播放；设置了间隔时间时先暂停，等待间隔后再继续
    * @param {number} startTime 句子起始时间（秒）
+   * @param {number} [span] 句子自身时长（秒），间隔选「各句子本身时长」时必需
    */
-  #restartSentence(startTime) {
+  #restartSentence(startTime, span = 0) {
     this.#cancelSentenceRestart();
     this.pendingRestartStartTime = startTime;
-    const intervalMs = Math.max(0, Number(this.state.loopInterval) || 0) * 1000;
+    this.pendingRestartSpan = Number(span) || 0;
+    const intervalMs = this.#resolveIntervalMs(this.pendingRestartSpan);
     if (intervalMs <= 0) {
       this.player.seek(startTime);
       return;
@@ -757,7 +782,9 @@ export class ReadingSystem {
 
   /** 循环间隔文案 */
   #loopIntervalLabel() {
-    const interval = Number(this.state.loopInterval) || 0;
+    const interval = Number(this.state.loopInterval);
+    if (!Number.isFinite(interval)) return '无间隔';
+    if (interval === SENTENCE_LENGTH_INTERVAL) return '按句子时长';
     return interval > 0 ? `间隔 ${interval} 秒` : '无间隔';
   }
 
@@ -789,7 +816,7 @@ export class ReadingSystem {
     this.state.loopCount = value;
     this.state.sentenceRepeatCount = 1;
     if (this.sentenceRestartTimer !== null) {
-      this.#restartSentence(this.pendingRestartStartTime);
+      this.#restartSentence(this.pendingRestartStartTime, this.pendingRestartSpan);
     }
     setStorage(this.config.STORAGE_KEYS.LOOP_COUNT, value);
     this.#updateLoopUI();
@@ -801,7 +828,7 @@ export class ReadingSystem {
     if (!this.config.LOOP_INTERVAL_OPTIONS.includes(value)) return;
     this.state.loopInterval = value;
     if (this.sentenceRestartTimer !== null) {
-      this.#restartSentence(this.pendingRestartStartTime);
+      this.#restartSentence(this.pendingRestartStartTime, this.pendingRestartSpan);
     }
     setStorage(this.config.STORAGE_KEYS.LOOP_INTERVAL, value);
     this.#updateLoopUI();
