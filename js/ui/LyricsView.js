@@ -3,7 +3,7 @@
  * @module ui/LyricsView
  */
 
-import { addClass, delegate, qsa, removeClass, setHTML } from '../utils/dom.js';
+import { addClass, delegate, on, qsa, removeClass, setHTML } from '../utils/dom.js';
 import { escapeHtml } from '../utils/escape.js';
 
 const MODE_CLASS = {
@@ -61,11 +61,41 @@ export class LyricsView {
     this.lineEls = qsa('.lyric-line', this.display);
   }
 
-  setEmpty(message) {
+  /**
+   * 显示空状态；传入 action 时会额外渲染一个引导按钮
+   * @param {string} message
+   * @param {{label: string, onClick: () => void}} [action] 可选的操作按钮
+   */
+  setEmpty(message, action) {
     if (!this.display) return;
     this.lineEls = [];
     this.activeIndex = -1;
-    setHTML(this.display, `<p class="placeholder">${escapeHtml(message)}</p>`);
+
+    if (!action?.label) {
+      setHTML(this.display, `<p class="placeholder">${escapeHtml(message)}</p>`);
+      return;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'placeholder-guide';
+
+    const text = document.createElement('p');
+    text.className = 'placeholder';
+    text.textContent = message;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'placeholder-btn';
+    btn.textContent = action.label;
+
+    // 必须阻止冒泡：否则"点击面板外部即关闭"的全局监听会立刻把刚打开的面板关掉
+    on(btn, 'click', (event) => {
+      event.stopPropagation();
+      action.onClick?.();
+    }, { signal: this.abort.signal });
+
+    wrap.append(text, btn);
+    this.display.replaceChildren(wrap);
   }
 
   /**

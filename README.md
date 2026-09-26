@@ -28,6 +28,34 @@
 
 ---
 
+## 🚀 本地运行（三种方式，任选其一）
+
+### 方式一：双击 exe（推荐 · 电脑无需安装 Python）
+
+1. 把 `NCE-Server.exe` 放在**项目根目录**（与 `index.html` 同级）。
+2. 双击运行，会自动启动本地服务并打开浏览器。
+3. 用完直接**关掉那个黑色窗口**即可停止服务。
+
+> - 默认端口 8080；被占用时会自动顺延（8080 → 8081 …），窗口里会显示实际地址。
+> - 想自己重新打包：`pip install pyinstaller`，然后执行 `python tools/build_exe.py`。
+> - exe 约 9MB，默认已在 `.gitignore` 中忽略（避免每次打包都往 Git 历史塞二进制）。
+>   要分享给别人，可直接发送这个 exe，或作为附件上传到 GitHub Release。
+
+### 方式二：已安装 Python
+
+```bash
+python tools/server.py               # 默认 8080，并自动打开浏览器
+python tools/server.py 9000          # 指定端口
+python tools/server.py --no-browser  # 不自动打开浏览器
+```
+
+### 方式三：一键脚本（Windows）
+
+- `start_py_server.bat`：先清理 8080 端口上的残留进程再启动（需要本机有 Python）。
+- `start_npx_server.bat`：用 `npx serve` 启动（需要本机有 Node.js）。
+
+---
+
 ## 📦 外挂资源
 
 系统的核心设计：**播放器与资源完全解耦**。一份学习资源就是一个可静态托管的目录，包含 `book.json` 描述文件、每课的 MP3 音频与 LRC 歌词。

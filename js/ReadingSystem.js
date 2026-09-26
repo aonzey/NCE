@@ -116,6 +116,8 @@ export class ReadingSystem {
     this.sentenceRestartTimer = null;
     this.sentenceLoopToken = 0;
     this.pendingRestartStartTime = 0;
+    // 句尾触发的「单次」标记：一次句尾只允许处理一次，详见 #handleSentence
+    this.sentenceEndArmed = true;
 
     this.toast = new Toast();
 
@@ -179,7 +181,7 @@ export class ReadingSystem {
       this.state.units = [];
       this.unitView.clearUnits();
       this.unitView.setBookMeta(null);
-      this.lyricsView.setEmpty(this.config.ERROR_MESSAGES.NO_DATA);
+      this.#showImportPrompt(this.config.ERROR_MESSAGES.NO_DATA);
       return;
     }
 
@@ -211,13 +213,19 @@ export class ReadingSystem {
       });
       this.unitView.renderUnits(units);
       this.unitView.resetListScroll();
+
+      // 拉取成功但一门课都没有（镜像目录为空）：同样引导用户导入
+      if (!units.length) {
+        this.#showImportPrompt(`「${bookName || this.state.bookKey}」暂时没有可用课程`);
+      }
     } catch (error) {
       if (error?.name === 'AbortError') throw error;
       console.error(this.config.ERROR_MESSAGES.LOAD_CONFIG, error);
       this.state.units = [];
       this.unitView.clearUnits();
-      this.lyricsView.setEmpty(
-        `${this.config.ERROR_MESSAGES.LOAD_CONFIG}: ${this.state.bookPath}/book.json`
+      // 默认课本拉不到（离线 / 镜像不可用）：引导导入，而不是只丢一句看不懂的报错
+      this.#showImportPrompt(
+        `${this.config.ERROR_MESSAGES.LOAD_CONFIG}：${this.state.bookPath}/book.json`
       );
     }
   }
@@ -246,6 +254,7 @@ export class ReadingSystem {
     this.state.currentLyricIndex = -1;
     this.state.sentenceLoopIndex = -1;
     this.state.sentenceRepeatCount = 1;
+    this.sentenceEndArmed = true;
     this.#cancelSentenceRestart();
     this.state.currentLyrics = [];
     saveCurrentUnitIndex(this.state.bookKey, unitIndex);
@@ -453,6 +462,23 @@ export class ReadingSystem {
     }
   }
 
+  /**
+   * 默认课本拿不到内容时（离线 / 镜像不可用 / 目录为空），
+   * 明确引导用户去点「导入」按钮加载自己的资料，而不是只丢一句看不懂的报错。
+   * @param {string} reason 具体原因，会展示在提示文字里
+   */
+  #showImportPrompt(reason) {
+    this.lyricsView.setEmpty(
+      `${reason}\n可以导入自己的 MP3 + LRC 开始学习。`,
+      { label: '导入学习资料', onClick: () => this.#openImportPanel() }
+    );
+  }
+
+  /** 打开导入面板：复用导入按钮自身的开合逻辑（含 aria-expanded、点击外部关闭） */
+  #openImportPanel() {
+    this.importPanel?.triggerBtn?.click();
+  }
+
   #onUnitNavigate(value) {
     if (value === 'prev') {
       if (this.state.currentUnitIndex > 0) {
@@ -479,6 +505,7 @@ export class ReadingSystem {
       this.state.sentenceLoopIndex = index;
       this.state.sentenceRepeatCount = 1;
     }
+    this.sentenceEndArmed = true;
     this.#setHighlight(index);
     this.player.seek(time);
     this.player.play();
@@ -513,6 +540,7 @@ export class ReadingSystem {
     if (locked < 0 && this.state.loopMode === 'one' && index >= 0 && index !== this.state.currentLyricIndex) {
       this.state.sentenceLoopIndex = index;
       this.state.sentenceRepeatCount = 1;
+      this.sentenceEndArmed = true;
     }
 
     this.#setHighlight(index);
@@ -531,9 +559,20 @@ export class ReadingSystem {
 
     const endTime = boundaries.endTime;
     if (!Number.isFinite(endTime)) return;
-    // 提前量：抵消帧间隔与 seek 延迟（二者换算到音频时间都会被倍速放大），
-    // 避免真正越过句尾、漏出下一句开头
-    if (currentTime + this.#sentenceLead(endTime - boundaries.startTime) < endTime) return;
+    const lead = this.#sentenceLead(endTime - boundaries.startTime);
+    if (currentTime + lead < endTime) {
+      // 还在句内：重新武装，允许下一次句尾触发
+      this.sentenceEndArmed = true;
+      return;
+    }
+
+    // 同一次句尾只能处理一次。
+    // 回跳本身是异步的（seek 需要解码/缓冲，播放在线音频时更久），而且在设置了
+    // 循环间隔时 #restartSentence 会先 pause()，pause 事件回调又会再跑一次进度
+    // 回调；这些回调读到的 currentTime 都还停在句尾。若不加以区分就会被重复计数，
+    // 表现为「设置循环 3 次实际只播 2 次，次数设得越大差得越多」。
+    if (!this.sentenceEndArmed) return;
+    this.sentenceEndArmed = false;
 
     if (this.state.loopMode === 'click') {
       const loopCount = this.state.loopCount;
@@ -666,6 +705,7 @@ export class ReadingSystem {
     if (nextMode === 'list' || nextMode === 'off' || nextMode === 'book') {
       this.state.sentenceLoopIndex = -1;
       this.state.sentenceRepeatCount = 0;
+      this.sentenceEndArmed = true;
       this.#cancelSentenceRestart();
     }
 
