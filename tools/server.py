@@ -53,6 +53,20 @@ NO_CACHE_EXT = {".html", ".htm", ".js", ".mjs", ".css", ".json", ".map"}
 # 媒体等大文件：允许缓存 + 支持 304，避免每次循环/seek 全量重传
 MEDIA_MAX_AGE = 300
 
+# Python 的 mimetypes 认不全这些后缀（flac / m4a / lrc 很多环境返回 octet-stream），
+# Content-Type 不对会让浏览器拒绝解码音频，这里显式补齐
+EXTRA_MIME_TYPES = {
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".wav": "audio/wav",
+    ".flac": "audio/flac",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".lrc": "text/plain; charset=utf-8",
+    ".srt": "text/plain; charset=utf-8",
+    ".vtt": "text/vtt; charset=utf-8",
+}
+
 RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
@@ -105,6 +119,13 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         # 告诉浏览器"我支持断点续传 / seek"
         self.send_header("Accept-Ranges", "bytes")
         super().end_headers()
+
+    def guess_type(self, path):
+        """优先用上面的显式映射，其余交给标准库。"""
+        ext = os.path.splitext(path)[1].lower()
+        if ext in EXTRA_MIME_TYPES:
+            return EXTRA_MIME_TYPES[ext]
+        return super().guess_type(path)
 
     def log_message(self, fmt, *args):
         sys.stderr.write("[nce] %s - %s\n" % (self.address_string(), fmt % args))

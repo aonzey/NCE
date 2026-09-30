@@ -1,5 +1,8 @@
 /**
  * LRC 歌词解析：`[mm:ss.xx]英文 | 中文`
+ *
+ * 只负责 LRC 这一种格式。对外请用 {@link module:utils/SubtitleParser}，
+ * 它会自动识别 LRC / SRT / VTT 并统一输出，句子边界等通用时间计算也在那里。
  * @module utils/LRCParser
  */
 
@@ -44,36 +47,5 @@ export class LRCParser {
     }
 
     return lyrics.sort((a, b) => a.time - b.time);
-  }
-
-  /**
-   * @param {Array<{time: number}>} lyrics
-   * @param {number} currentTime
-   * @returns {number}
-   */
-  static findLyricIndexByTime(lyrics, currentTime) {
-    if (!Array.isArray(lyrics) || lyrics.length === 0) return -1;
-
-    for (let i = lyrics.length - 1; i >= 0; i--) {
-      if (currentTime >= lyrics[i].time) return i;
-    }
-    return -1;
-  }
-
-  /**
-   * @param {Array<{time: number}>} lyrics
-   * @param {number} index
-   * @param {number} [audioDuration=0]
-   * @returns {{startTime: number, endTime: number, index: number}|null}
-   */
-  static getSentenceBoundaries(lyrics, index, audioDuration = 0) {
-    if (!Array.isArray(lyrics) || index < 0 || index >= lyrics.length) return null;
-
-    const startTime = lyrics[index].time;
-    const endTime = index < lyrics.length - 1
-      ? lyrics[index + 1].time
-      : Math.max(audioDuration, startTime + 0.1);
-
-    return { startTime, endTime, index };
   }
 }

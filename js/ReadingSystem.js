@@ -14,7 +14,7 @@ import {
   getCurrentUnitIndex,
   saveCurrentUnitIndex,
 } from './utils/storage.js';
-import { LRCParser } from './utils/LRCParser.js';
+import { SubtitleParser } from './utils/SubtitleParser.js';
 import { BookService } from './services/BookService.js';
 import { PrefetchService } from './services/PrefetchService.js';
 import { ImportService } from './services/ImportService.js';
@@ -267,9 +267,13 @@ export class ReadingSystem {
     this.unitView.updateNav(unitIndex, this.state.units.length);
 
     try {
-      const lrcText = await this.prefetch.loadLrc(unit.lrc, signal);
+      const subtitleText = await this.prefetch.loadSubtitle(unit.lrc, signal);
       if (loadId !== this.unitLoadId) return;
-      this.state.currentLyrics = LRCParser.parse(lrcText, this.config.PLAYER.TIME_OFFSET);
+      this.state.currentLyrics = SubtitleParser.parse(
+        subtitleText,
+        this.config.PLAYER.TIME_OFFSET,
+        unit.subtitleExt,
+      );
       this.lyricsView.render(this.state.currentLyrics);
     } catch (error) {
       if (error?.name === 'AbortError' || loadId !== this.unitLoadId) return;
@@ -537,7 +541,7 @@ export class ReadingSystem {
     const locked = this.#lockedSentenceIndex();
     const index = locked >= 0
       ? locked
-      : LRCParser.findLyricIndexByTime(this.state.currentLyrics, this.player.currentTime);
+      : SubtitleParser.findLyricIndexByTime(this.state.currentLyrics, this.player.currentTime);
 
     // 单句循环模式：上一句循环完成后自动锁定下一句，保持整课逐句循环
     if (locked < 0 && this.state.loopMode === 'one' && index >= 0 && index !== this.state.currentLyricIndex) {
@@ -553,7 +557,7 @@ export class ReadingSystem {
     const locked = this.#lockedSentenceIndex();
     if (locked < 0 || !Number.isFinite(currentTime)) return;
 
-    const boundaries = LRCParser.getSentenceBoundaries(
+    const boundaries = SubtitleParser.getSentenceBoundaries(
       this.state.currentLyrics,
       locked,
       duration

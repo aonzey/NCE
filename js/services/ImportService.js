@@ -1,10 +1,36 @@
 /**
- * 自定义课本导入服务：文件夹 / 多选文件 / ZIP / URL 四种方式导入 mp3+lrc
- * 导入结果持久化到 IndexedDB（音频存 Blob，歌词存文本），刷新后自动恢复
+ * 自定义课本导入服务：文件夹 / 多选文件 / ZIP / URL 四种方式导入音频 + 字幕
+ * 音频支持 mp3 / m4a / wav / flac，字幕支持 lrc / srt / vtt（同一课内可混用）
+ * 导入结果持久化到 IndexedDB（音频存 Blob，字幕存文本），刷新后自动恢复
  * @module services/ImportService
  */
 
 import { readZip } from './ZipReader.js';
+import { CONFIG } from '../config.js';
+
+const { AUDIO_EXTS, SUBTITLE_EXTS, AUDIO_MIME, SUBTITLE_MIME } = CONFIG.MEDIA;
+const AUDIO_EXT_SET = new Set(AUDIO_EXTS);
+const SUBTITLE_EXT_SET = new Set(SUBTITLE_EXTS);
+
+/** 是否支持的音频扩展名 */
+function isAudioExt(ext) {
+  return AUDIO_EXT_SET.has(String(ext).toLowerCase());
+}
+
+/** 是否支持的字幕扩展名 */
+function isSubtitleExt(ext) {
+  return SUBTITLE_EXT_SET.has(String(ext).toLowerCase());
+}
+
+/** 音频扩展名 -> MIME，未知格式兜底 audio/mpeg（浏览器也支持按内容嗅探） */
+function audioMime(ext) {
+  return AUDIO_MIME[String(ext).toLowerCase()] || 'audio/mpeg';
+}
+
+/** 字幕扩展名 -> MIME */
+function subtitleMime(ext) {
+  return SUBTITLE_MIME[String(ext).toLowerCase()] || 'text/plain';
+}
 
 const DB_NAME = 'nce-imports';
 const DB_VERSION = 1;
@@ -120,7 +146,7 @@ export class ImportService {
   async #materialize(record) {
     const units = [];
     for (const unit of record.units || []) {
-      const resolved = { id: 0, title: unit.title, audio: '', lrc: '' };
+      const resolved = { id: 0, title: unit.title, audio: '', lrc: '', subtitleExt: unit.subtitleExt || '' };
       if (unit.fileKey) {
         const blob = await this.#request(FILES_STORE, 'readonly', (os) => os.get(unit.fileKey));
         if (!blob) continue; // 数据被清空，跳过该课
@@ -129,7 +155,9 @@ export class ImportService {
         resolved.audio = unit.audioUrl;
       }
       if (unit.lrcText) {
-        resolved.lrc = this.#createBlobUrl(new Blob([unit.lrcText], { type: 'text/plain' }));
+        resolved.lrc = this.#createBlobUrl(
+          new Blob([unit.lrcText], { type: subtitleMime(unit.subtitleExt) }),
+        );
       } else if (unit.lrcUrl) {
         // 远程歌词（book.json 导入）：保留 URL，播放时按需加载，不预下载
         resolved.lrc = unit.lrcUrl;
@@ -156,8 +184,9 @@ export class ImportService {
    * @returns {Promise<{key: string, title: string, custom: true, unitCount: number}>}
    */
   async importFromFileList(fileList, options = {}, onProgress) {
-    const files = Array.from(fileList || []).filter((f) => f && /^(mp3|lrc)$/i.test(extOf(f.name)));
-    if (!files.length) throw new Error('未找到 mp3 / lrc 文件');
+    const files = Array.from(fileList || [])
+      .filter((f) => f && (isAudioExt(extOf(f.name)) || isSubtitleExt(extOf(f.name))));
+    if (!files.length) throw new Error(`未找到音频（${AUDIO_EXTS.join('/')}）或字幕（${SUBTITLE_EXTS.join('/')}）文件`);
 
     const record = this.#createRecord(options);
     const pairs = this.#pairFiles(files);
@@ -169,13 +198,21 @@ export class ImportService {
 
     let done = 0;
     for (const pair of pairs) {
-      const unit = { title: pair.title, filename: pair.base, fileKey: null, lrcText: null };
+      const unit = {
+        title: pair.title,
+        filename: pair.base,
+        fileKey: null,
+        lrcText: null,
+        audioExt: pair.audioExt || '',
+        subtitleExt: pair.subtitleExt || '',
+      };
       if (pair.audio) {
-        unit.fileKey = `${record.key}/${pair.base}.mp3`;
-        await this.#request(FILES_STORE, 'readwrite', (os) => os.put(pair.audio, unit.fileKey));
+        const ext = pair.audioExt || extOf(pair.audio.name);
+        unit.fileKey = `${record.key}/${pair.base}.${ext}`;
+        await this.#request(FILES_STORE, 'readwrite', (os) => os.put(this.#toAudioBlob(pair.audio, ext), unit.fileKey));
       }
-      if (pair.lrc) {
-        unit.lrcText = await pair.lrc.text();
+      if (pair.subtitle) {
+        unit.lrcText = await pair.subtitle.text();
       }
       record.units.push(unit);
       done += 1;
@@ -186,6 +223,22 @@ export class ImportService {
   }
 
   /**
+   * 音频文件 -> Blob，并确保 MIME 正确
+   *
+   * Windows 上浏览器给的 File.type 常常是空字符串（m4a / flac 尤其常见），
+   * 存进 IndexedDB 再取出来播放时可能解不了码，所以按扩展名补一个。
+   * @param {File|Blob} file
+   * @param {string} ext
+   * @returns {Blob}
+   */
+  #toAudioBlob(file, ext) {
+    const declared = file.type || '';
+    if (declared.startsWith('audio/')) return file;
+    // Blob 可以直接接受 Blob/File 作为 part，不需要先读进内存
+    return new Blob([file], { type: audioMime(ext) });
+  }
+
+  /**
    * 由 ZIP 二进制导入
    * @param {ArrayBuffer} buffer
    * @param {{title?: string}} [options]
@@ -193,8 +246,10 @@ export class ImportService {
    */
   async importFromZip(buffer, options = {}, onProgress) {
     const entries = await readZip(buffer);
-    const media = entries.filter((e) => /^(mp3|lrc)$/i.test(extOf(e.name)));
-    if (!media.length) throw new Error('ZIP 内未找到 mp3 / lrc 文件');
+    const media = entries.filter((e) => isAudioExt(extOf(e.name)) || isSubtitleExt(extOf(e.name)));
+    if (!media.length) {
+      throw new Error(`ZIP 内未找到音频（${AUDIO_EXTS.join('/')}）或字幕（${SUBTITLE_EXTS.join('/')}）文件`);
+    }
 
     const record = this.#createRecord(options);
     // 默认书名优先级：用户输入 > 压缩包内唯一一级目录 > zip 文件名
@@ -212,8 +267,8 @@ export class ImportService {
         name: baseName(e.name),
         base: stripExt(baseName(e.name)),
         ext,
-        audio: ext === 'mp3' ? e : null,
-        lrc: ext === 'lrc' ? e : null,
+        audio: isAudioExt(ext) ? e : null,
+        subtitle: isSubtitleExt(ext) ? e : null,
         bytes: e.bytes,
       };
     });
@@ -221,14 +276,22 @@ export class ImportService {
     const pairs = this.#pairPseudo(pseudoFiles);
     let done = 0;
     for (const pair of pairs) {
-      const unit = { title: pair.title, filename: pair.base, fileKey: null, lrcText: null };
+      const unit = {
+        title: pair.title,
+        filename: pair.base,
+        fileKey: null,
+        lrcText: null,
+        audioExt: pair.audioExt || '',
+        subtitleExt: pair.subtitleExt || '',
+      };
       if (pair.audio) {
-        unit.fileKey = `${record.key}/${pair.base}.mp3`;
-        const blob = new Blob([pair.audio.bytes], { type: 'audio/mpeg' });
+        const ext = pair.audioExt || extOf(pair.audio.name);
+        unit.fileKey = `${record.key}/${pair.base}.${ext}`;
+        const blob = new Blob([pair.audio.bytes], { type: audioMime(ext) });
         await this.#request(FILES_STORE, 'readwrite', (os) => os.put(blob, unit.fileKey));
       }
-      if (pair.lrc) {
-        unit.lrcText = new TextDecoder('utf-8').decode(pair.lrc.bytes);
+      if (pair.subtitle) {
+        unit.lrcText = new TextDecoder('utf-8').decode(pair.subtitle.bytes);
       }
       record.units.push(unit);
       done += 1;
@@ -297,16 +360,21 @@ export class ImportService {
       return this.#importFromBookJson(data, url, options, onProgress);
     }
 
-    // HTML 目录列表：解析 <a href> 中的 mp3 / lrc
+    // HTML 目录列表：解析 <a href> 中的音频 / 字幕链接
+    const mediaPattern = new RegExp(`\\.(${AUDIO_EXTS.join('|')}|${SUBTITLE_EXTS.join('|')})(\\?|$)`, 'i');
     const doc = new DOMParser().parseFromString(text, 'text/html');
     const links = [...doc.querySelectorAll('a[href]')]
       .map((a) => a.getAttribute('href'))
-      .filter((href) => href && /\.(mp3|lrc)(\?|$)/i.test(href))
+      .filter((href) => href && mediaPattern.test(href))
       .map((href) => new URL(href, url).toString());
 
-    const mp3s = links.filter((l) => /\.mp3(\?|$)/i.test(l));
-    const lrcs = links.filter((l) => /\.lrc(\?|$)/i.test(l));
-    if (!mp3s.length) throw new Error('该 URL 不是 ZIP，目录列表中也未找到 mp3 文件');
+    const audioPattern = new RegExp(`\\.(${AUDIO_EXTS.join('|')})(\\?|$)`, 'i');
+    const subtitlePattern = new RegExp(`\\.(${SUBTITLE_EXTS.join('|')})(\\?|$)`, 'i');
+    const audios = links.filter((l) => audioPattern.test(l));
+    const subtitles = links.filter((l) => subtitlePattern.test(l));
+    if (!audios.length) {
+      throw new Error(`该 URL 不是 ZIP，目录列表中也未找到音频文件（${AUDIO_EXTS.join('/')}）`);
+    }
 
     const record = this.#createRecord(options);
     if (!record.title) {
@@ -320,28 +388,34 @@ export class ImportService {
       record.title = lastSeg;
     }
 
-    const lrcMap = new Map();
-    for (const lrcUrl of lrcs) {
-      lrcMap.set(decodeBaseName(lrcUrl).toLowerCase(), lrcUrl);
+    const subtitleMap = new Map();
+    for (const subtitleUrl of subtitles) {
+      subtitleMap.set(decodeBaseName(subtitleUrl).toLowerCase(), subtitleUrl);
     }
 
     const units = [];
-    mp3s.sort(naturalCompare);
-    for (const mp3Url of mp3s) {
-      const base = decodeBaseName(mp3Url);
-      const lrcUrl = lrcMap.get(base.toLowerCase()) || null;
-      units.push({ title: titleFromBase(base), filename: base, audioUrl: mp3Url, lrcUrl });
+    audios.sort(naturalCompare);
+    for (const audioUrl of audios) {
+      const base = decodeBaseName(audioUrl);
+      const subtitleUrl = subtitleMap.get(base.toLowerCase()) || null;
+      units.push({
+        title: titleFromBase(base),
+        filename: base,
+        audioUrl,
+        lrcUrl: subtitleUrl,
+        subtitleExt: subtitleUrl ? extOf(new URL(subtitleUrl).pathname) : '',
+      });
     }
 
-    // 拉取歌词文本（小文件，直接存文本，播放时不再请求）
+    // 拉取字幕文本（小文件，直接存文本，播放时不再请求）
     let done = 0;
     for (const unit of units) {
       if (unit.lrcUrl) {
         try {
-          const lrcRes = await fetch(unit.lrcUrl);
-          if (lrcRes.ok) unit.lrcText = await lrcRes.text();
+          const subRes = await fetch(unit.lrcUrl);
+          if (subRes.ok) unit.lrcText = await subRes.text();
         } catch {
-          // 单课歌词失败不阻断导入
+          // 单课字幕失败不阻断导入
         }
       }
       delete unit.lrcUrl;
@@ -380,16 +454,22 @@ export class ImportService {
     for (const unit of rawUnits) {
       const filename = String(unit?.filename ?? unit?.name ?? '').trim();
       if (!filename) continue;
-      const base = filename.replace(/\.(mp3|lrc)$/i, '');
-      const audioUrl = toUrl(unit.audio || `${base}.mp3`);
+      // filename 可能自带扩展名（mp3/m4a/wav/flac 与 lrc/srt/vtt 都有可能）
+      const base = filename.replace(
+        new RegExp(`\\.(${AUDIO_EXTS.join('|')}|${SUBTITLE_EXTS.join('|')})$`, 'i'),
+        '',
+      );
+      const audioUrl = toUrl(unit.audio || `${base}.${AUDIO_EXTS[0]}`);
       if (!audioUrl) continue;
+      const subtitleFile = unit.lrc || unit.subtitle || `${base}.${SUBTITLE_EXTS[0]}`;
       record.units.push({
         title: unit.title || titleFromBase(base),
         filename: base,
         fileKey: null,
         lrcText: null,
         audioUrl,
-        lrcUrl: toUrl(unit.lrc || `${base}.lrc`),
+        lrcUrl: toUrl(subtitleFile),
+        subtitleExt: extOf(subtitleFile),
       });
       done += 1;
       onProgress?.(done, rawUnits.length);
@@ -422,14 +502,17 @@ export class ImportService {
 
   /** File 对象配对（按不含扩展名的基础名，忽略大小写） */
   #pairFiles(files) {
-    const pseudo = files.map((f) => ({
-      name: f.name,
-      base: stripExt(f.name),
-      ext: extOf(f.name),
-      audio: f.name.toLowerCase().endsWith('.mp3') ? f : null,
-      lrc: f.name.toLowerCase().endsWith('.lrc') ? f : null,
-      bytes: null,
-    }));
+    const pseudo = files.map((f) => {
+      const ext = extOf(f.name);
+      return {
+        name: f.name,
+        base: stripExt(f.name),
+        ext,
+        audio: isAudioExt(ext) ? f : null,
+        subtitle: isSubtitleExt(ext) ? f : null,
+        bytes: null,
+      };
+    });
     return this.#pairPseudo(pseudo);
   }
 
@@ -437,17 +520,25 @@ export class ImportService {
     const byBase = new Map();
     for (const item of items) {
       const key = item.base.toLowerCase();
-      if (!byBase.has(key)) byBase.set(key, { base: item.base, audio: null, lrc: null });
+      if (!byBase.has(key)) {
+        byBase.set(key, { base: item.base, audio: null, subtitle: null, audioExt: '', subtitleExt: '' });
+      }
       const pair = byBase.get(key);
-      if (item.audio) pair.audio = item.audio;
-      if (item.lrc) pair.lrc = item.lrc;
+      if (item.audio) {
+        pair.audio = item.audio;
+        pair.audioExt = item.ext;
+      }
+      if (item.subtitle) {
+        pair.subtitle = item.subtitle;
+        pair.subtitleExt = item.ext;
+      }
     }
 
     const pairs = [...byBase.values()]
       .filter((p) => p.audio) // 有音频才成课
       .sort((a, b) => naturalCompare(a.base, b.base))
       .map((p) => ({ ...p, title: titleFromBase(p.base) }));
-    if (!pairs.length) throw new Error('未配对到任何 mp3（缺少音频文件）');
+    if (!pairs.length) throw new Error(`未配对到任何音频文件（${AUDIO_EXTS.join('/')}）`);
     return pairs;
   }
 

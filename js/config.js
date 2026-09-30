@@ -55,6 +55,27 @@ export const CONFIG = {
     TIME_OFFSET: 0.3,
   },
 
+  /**
+   * 支持的媒体格式
+   * AUDIO_EXTS / SUBTITLE_EXTS 的数组顺序即「本地课本扩展名探测」的优先级
+   */
+  MEDIA: {
+    AUDIO_EXTS: ['mp3', 'm4a', 'wav', 'flac'],
+    SUBTITLE_EXTS: ['lrc', 'srt', 'vtt'],
+    /** 扩展名 -> MIME：导入的文件包成 Blob 时用，浏览器据此决定能否解码 */
+    AUDIO_MIME: {
+      mp3: 'audio/mpeg',
+      m4a: 'audio/mp4',
+      wav: 'audio/wav',
+      flac: 'audio/flac',
+    },
+    SUBTITLE_MIME: {
+      lrc: 'text/plain',
+      srt: 'application/x-subrip',
+      vtt: 'text/vtt',
+    },
+  },
+
   UI: {
     LYRIC_SCROLL_THRESHOLD: 0.1,
     THEME_ANIMATION_DURATION: 300,

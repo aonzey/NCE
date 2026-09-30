@@ -26,11 +26,12 @@ export class PrefetchService {
   }
 
   /**
+   * 加载字幕文本（LRC / SRT / VTT 都是纯文本，统一按文本读取）
    * @param {string} url
    * @param {AbortSignal} [signal]
    * @returns {Promise<string>}
    */
-  async loadLrc(url, signal) {
+  async loadSubtitle(url, signal) {
     const cached = this.lrcCache.get(url);
     if (cached !== undefined) return cached;
 
