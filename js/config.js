@@ -21,7 +21,18 @@ export const CONFIG = {
     PLAYBACK_RATE: 'playbackRate',
     TRANSLATION_MODE: 'translationMode',
     LYRIC_SCALE: 'lyricScale',
+    FULLSCREEN_LYRIC_SCALE: 'fullscreenLyricScale',
     THEME: 'theme',
+  },
+
+  /**
+   * 全屏字幕的字号缩放（拖动滑块调节，与列表字号 LYRIC_SCALE_OPTIONS 互不影响）
+   */
+  FULLSCREEN_LYRIC: {
+    MIN_SCALE: 0.6,
+    MAX_SCALE: 3,
+    STEP: 0.1,
+    DEFAULT_SCALE: 1.4,
   },
 
   AVAILABLE_SPEEDS: [0.5, 0.75, 1.0, 1.25, 1.5, 2.0],
@@ -80,6 +91,8 @@ export const CONFIG = {
     LYRIC_SCROLL_THRESHOLD: 0.1,
     THEME_ANIMATION_DURATION: 300,
     MODAL_ANIMATION_DURATION: 200,
+    /** 全屏字幕里鼠标静止多久后自动隐藏控件（毫秒） */
+    FULLSCREEN_IDLE_MS: 3000,
   },
 
   ERROR_MESSAGES: {
@@ -108,5 +121,6 @@ export function createInitialState() {
     playbackRate: 1.0,
     translationMode: 'show',
     lyricScale: 1,
+    fsLyricScale: CONFIG.FULLSCREEN_LYRIC.DEFAULT_SCALE,
   };
 }

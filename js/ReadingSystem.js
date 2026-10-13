@@ -23,6 +23,7 @@ import { LyricsView } from './ui/LyricsView.js';
 import { UnitView } from './ui/UnitView.js';
 import { Toast } from './ui/Toast.js';
 import { ImportPanel } from './ui/ImportPanel.js';
+import { FullscreenLyric } from './ui/FullscreenLyric.js';
 
 const LOOP_MODE_LABELS = {
   off: '关闭循环',
@@ -112,6 +113,17 @@ export class ReadingSystem {
     this.lyricSizeText = qs('#lyricSizeText');
     this.lyricSizePanel = qs('#lyricSizePanel');
     this.lyricsContainerEl = qs('.lyrics-container');
+    this.fullscreenBtn = qs('#fullscreenBtn');
+
+    this.fullscreenLyric = new FullscreenLyric({
+      root: qs('#fullscreenLyricView'),
+      onTogglePlay: () => this.#togglePlayFromFullscreen(),
+      onSeekRatio: (ratio) => this.#seekByRatio(ratio),
+      onPrevSentence: () => this.#jumpSentence(-1),
+      onNextSentence: () => this.#jumpSentence(1),
+      onCycleSpeed: () => this.#cycleSpeed(),
+      onScaleChange: (scale) => this.#setFullscreenLyricScale(scale),
+    });
 
     this.sentenceRestartTimer = null;
     this.sentenceLoopToken = 0;
@@ -275,6 +287,7 @@ export class ReadingSystem {
         unit.subtitleExt,
       );
       this.lyricsView.render(this.state.currentLyrics);
+      this.fullscreenLyric?.setLyrics(this.state.currentLyrics);
     } catch (error) {
       if (error?.name === 'AbortError' || loadId !== this.unitLoadId) return;
       console.error(this.config.ERROR_MESSAGES.LOAD_LYRIC, error);
@@ -303,6 +316,7 @@ export class ReadingSystem {
     this.lyricsView.destroy();
     this.unitView.destroy();
     this.importPanel?.destroy();
+    this.fullscreenLyric?.destroy();
     this.prefetch.clear();
     this.toast.destroy();
   }
@@ -313,6 +327,9 @@ export class ReadingSystem {
     on(this.speedBtn, 'click', () => this.#cycleSpeed(), { signal });
     on(this.loopToggleBtn, 'click', () => this.#cycleLoopMode(), { signal });
     on(this.toggleTranslationBtn, 'click', () => this.#cycleTranslation(), { signal });
+    if (this.fullscreenBtn) {
+      on(this.fullscreenBtn, 'click', () => this.#openFullscreenLyric(), { signal });
+    }
     if (this.lyricSizeBtn) {
       on(this.lyricSizeBtn, 'click', (event) => {
         event.stopPropagation();
@@ -410,6 +427,12 @@ export class ReadingSystem {
     const storedLyricScale = parseFloat(getStorage(this.config.STORAGE_KEYS.LYRIC_SCALE));
     if (this.config.LYRIC_SCALE_OPTIONS.includes(storedLyricScale)) {
       this.state.lyricScale = storedLyricScale;
+    }
+
+    const { MIN_SCALE, MAX_SCALE } = this.config.FULLSCREEN_LYRIC;
+    const storedFsScale = parseFloat(getStorage(this.config.STORAGE_KEYS.FULLSCREEN_LYRIC_SCALE));
+    if (Number.isFinite(storedFsScale)) {
+      this.state.fsLyricScale = clamp(storedFsScale, MIN_SCALE, MAX_SCALE);
     }
 
     this.player.setLoop(this.state.loopMode === 'list');
@@ -523,7 +546,63 @@ export class ReadingSystem {
     if (!this.ready) return;
     this.#handleSentence(currentTime, duration);
     this.#syncHighlight();
+    this.#syncFullscreenLyricProgress(currentTime, duration);
     this.persistProgress();
+  }
+
+  /** 全屏字幕打开时，同步进度条、时间与播放按钮状态 */
+  #syncFullscreenLyricProgress(currentTime, duration) {
+    if (!this.fullscreenLyric?.isOpen) return;
+    this.fullscreenLyric.updateProgress(currentTime, duration);
+    this.fullscreenLyric.setPlaying(!this.player.paused);
+  }
+
+  /** 打开全屏字幕：先把当前状态灌进去，再显示 */
+  #openFullscreenLyric() {
+    if (!this.fullscreenLyric) return;
+    this.fullscreenLyric.setScale(this.state.fsLyricScale);
+    this.fullscreenLyric.setLyrics(this.state.currentLyrics);
+    this.fullscreenLyric.activeIndex = -1; // 强制重绘，避免与当前高亮相同时跳过
+    this.fullscreenLyric.setActive(this.state.currentLyricIndex);
+    this.fullscreenLyric.setTranslationMode(this.state.translationMode);
+    this.fullscreenLyric.setSpeedLabel(this.speedText?.textContent || '1.0x');
+    this.fullscreenLyric.updateProgress(this.player.currentTime, this.player.duration);
+    this.fullscreenLyric.setPlaying(!this.player.paused);
+    this.fullscreenLyric.open();
+  }
+
+  /** 全屏里的播放/暂停：与主界面一致，暂停时取消待执行的句子重启 */
+  #togglePlayFromFullscreen() {
+    if (!this.player.paused) this.#cancelSentenceRestart();
+    this.player.toggle();
+    this.fullscreenLyric?.setPlaying(!this.player.paused);
+  }
+
+  /** 全屏进度条：按 0~1 的比例跳转 */
+  #seekByRatio(ratio) {
+    const duration = this.player.duration;
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    const time = clamp(ratio, 0, 1) * duration;
+    this.#cancelSentenceRestart();
+    this.player.seek(time);
+    this.#saveProgress(time);
+  }
+
+  /** 全屏里的上一句 / 下一句 */
+  #jumpSentence(delta) {
+    const lyrics = this.state.currentLyrics;
+    if (!lyrics.length) return;
+    const from = this.state.currentLyricIndex >= 0 ? this.state.currentLyricIndex : 0;
+    const index = clamp(from + delta, 0, lyrics.length - 1);
+    const lyric = lyrics[index];
+    if (!lyric || !Number.isFinite(lyric.time)) return;
+    this.#onLyricActivate(index, lyric.time);
+  }
+
+  #setFullscreenLyricScale(scale) {
+    if (!Number.isFinite(scale)) return;
+    this.state.fsLyricScale = scale;
+    setStorage(this.config.STORAGE_KEYS.FULLSCREEN_LYRIC_SCALE, scale);
   }
 
   #lockedSentenceIndex() {
@@ -534,6 +613,7 @@ export class ReadingSystem {
   #setHighlight(index) {
     if (index === this.state.currentLyricIndex) return;
     this.lyricsView.highlight(index);
+    this.fullscreenLyric?.setActive(index);
     this.state.currentLyricIndex = index;
   }
 
@@ -706,6 +786,7 @@ export class ReadingSystem {
   #updateSpeedUI() {
     setText(this.speedText, `${this.state.playbackRate}x`);
     toggleClass(this.speedBtn, 'active', this.state.playbackRate !== 1.0);
+    this.fullscreenLyric?.setSpeedLabel(`${this.state.playbackRate}x`);
   }
 
   #onAudioEnded() {
@@ -845,6 +926,7 @@ export class ReadingSystem {
     this.state.translationMode = modes[(currentIndex + 1) % modes.length];
     setStorage(this.config.STORAGE_KEYS.TRANSLATION_MODE, this.state.translationMode);
     this.lyricsView.applyTranslationMode(this.state.translationMode, this.toggleTranslationBtn);
+    this.fullscreenLyric?.setTranslationMode(this.state.translationMode);
     this.toast.show(TRANSLATION_LABELS[this.state.translationMode]);
   }
 
