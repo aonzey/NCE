@@ -189,10 +189,37 @@ export class UnitView {
     });
 
     if (this.prevBtn) {
-      on(this.prevBtn, 'click', () => this.onUnitChange?.('prev'), { signal });
+      on(this.prevBtn, 'click', () => this.#navigate('prev'), { signal });
     }
     if (this.nextBtn) {
-      on(this.nextBtn, 'click', () => this.onUnitChange?.('next'), { signal });
+      on(this.nextBtn, 'click', () => this.#navigate('next'), { signal });
     }
+
+    // PageUp / PageDown 切换上一课 / 下一课，与两个导航按钮走同一条路径
+    // （含 disabled 判断），行为完全一致
+    const PAGE_KEYS = { PageUp: 'prev', PageDown: 'next' };
+    on(document, 'keydown', (event) => {
+      const direction = PAGE_KEYS[event.key];
+      if (!direction) return;
+      // 带修饰键的组合留给浏览器（Ctrl+PageUp 切标签页等）
+      if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+      // 焦点在表单控件里时不拦截：输入框要能正常移动光标，
+      // select 上的方向/翻页键有原生语义且会自行触发 change
+      const target = event.target;
+      if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
+      if (this.#navigate(direction)) event.preventDefault();
+    }, { signal });
+  }
+
+  /**
+   * 触发上一课 / 下一课；按钮处于 disabled（已是首课 / 末课）时什么都不做
+   * @param {'prev'|'next'} direction
+   * @returns {boolean} 是否真的触发了切换
+   */
+  #navigate(direction) {
+    const btn = direction === 'prev' ? this.prevBtn : this.nextBtn;
+    if (!btn || btn.disabled) return false;
+    this.onUnitChange?.(direction);
+    return true;
   }
 }

@@ -644,7 +644,12 @@ export class ReadingSystem {
     );
     if (!boundaries || !Number.isFinite(boundaries.startTime)) return;
 
-    const endTime = boundaries.endTime;
+    // 字幕里声明的结束时间可能超出音频长度（最后一句尤其常见），
+    // 此时永远等不到 endTime，句子一次都不会重播 —— 先按音频长度收敛
+    let endTime = boundaries.endTime;
+    if (Number.isFinite(duration) && duration > 0) {
+      endTime = Math.min(endTime, duration);
+    }
     if (!Number.isFinite(endTime)) return;
     const lead = this.#sentenceLead(endTime - boundaries.startTime);
     if (currentTime + lead < endTime) {
@@ -719,6 +724,13 @@ export class ReadingSystem {
     return Math.min(safe, 0.2);
   }
 
+  /** 播放位置是否已到音频末尾（ended 属性在部分时机还没置位，用位置兜一层） */
+  #atMediaEnd() {
+    const duration = this.player.duration;
+    if (!Number.isFinite(duration) || duration <= 0) return false;
+    return this.player.currentTime >= duration - 0.05;
+  }
+
   /**
    * 计算本次重播前的停顿毫秒数
    * @param {number} span 当前句子自身时长（秒），间隔选「各句子本身时长」时使用
@@ -745,12 +757,21 @@ export class ReadingSystem {
    * @param {number} [span] 句子自身时长（秒），间隔选「各句子本身时长」时必需
    */
   #restartSentence(startTime, span = 0) {
+    // 改设置时如果正在等间隔，重算后仍要接着播
+    const wasWaiting = Boolean(this.sentenceRestartTimer);
     this.#cancelSentenceRestart();
     this.pendingRestartStartTime = startTime;
     this.pendingRestartSpan = Number(span) || 0;
+
+    // 最后一句的句尾就是音频末尾：浏览器会在 ended 之前先把媒体置为 paused，
+    // 此时光 seek 回句首不会继续播，剩下的循环次数会被整段吃掉
+    // （表现为「最后一句循环次数不对」）。这里认出这种状态并补一次 play()
+    const atMediaEnd = this.player.ended || this.#atMediaEnd();
+
     const intervalMs = this.#resolveIntervalMs(this.pendingRestartSpan);
     if (intervalMs <= 0) {
       this.player.seek(startTime);
+      if (atMediaEnd || wasWaiting) this.player.play();
       return;
     }
 

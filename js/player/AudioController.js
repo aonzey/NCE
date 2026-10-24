@@ -52,6 +52,11 @@ export class AudioController {
     return this.audio?.paused ?? true;
   }
 
+  /** 媒体是否已播放到末尾（此时浏览器已把它当作 paused，但没有 paused 事件之外的提示） */
+  get ended() {
+    return Boolean(this.audio?.ended);
+  }
+
   get playbackRate() {
     return this.audio?.playbackRate ?? 1;
   }
