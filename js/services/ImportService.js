@@ -134,7 +134,7 @@ export class ImportService {
       try {
         await this.#materialize(record);
         this.records.set(record.key, record);
-        result.push({ key: record.key, title: record.title, custom: true });
+        result.push({ id: record.key, key: record.key, title: record.title, custom: true });
       } catch (error) {
         console.error(`[import] 恢复书本失败：${record.title}`, error);
       }
@@ -609,6 +609,7 @@ export class ImportService {
   /** 当前所有自定义书本（用于面板管理列表） */
   listBooks() {
     return [...this.records.values()].map((r) => ({
+      id: r.key,
       key: r.key,
       title: r.title,
       unitCount: (r.resolvedUnits || r.units || []).length,

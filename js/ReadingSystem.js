@@ -162,7 +162,9 @@ export class ReadingSystem {
       if (!customBooks.length) return;
       // 注意：state.books 与 bookService.books 是同一引用，去重后只 push 一次
       for (const book of customBooks) {
-        if (this.state.books.some((b) => b.key === book.key)) continue;
+        // 自定义课本的 key 本身唯一，补成 id 与目录里的书本统一处理
+        if (!book.id) book.id = book.key;
+        if (this.state.books.some((b) => (b.id || b.key) === book.id)) continue;
         this.state.books.push(book);
       }
     } catch (error) {
@@ -171,13 +173,17 @@ export class ReadingSystem {
   }
 
   async applyBookFromHash() {
-    const keyFromHash = location.hash.slice(1).trim();
-    const storedBookKey = getStorage(this.config.STORAGE_KEYS.BOOK_SELECTION);
-    const initialBookKey = keyFromHash || storedBookKey || this.config.DEFAULT_BOOK_KEY;
-    await this.applyBookChange(initialBookKey);
+    const idFromHash = location.hash.slice(1).trim();
+    const storedBookId = getStorage(this.config.STORAGE_KEYS.BOOK_SELECTION);
+    const initialBookId = idFromHash || storedBookId || this.config.DEFAULT_BOOK_KEY;
+    await this.applyBookChange(initialBookId);
   }
 
-  async applyBookChange(bookKey) {
+  /**
+   * 切换课本
+   * @param {string} bookId 唯一 id（旧值可能是 key，BookService.resolve 会兜住）
+   */
+  async applyBookChange(bookId) {
     this.bookAbort?.abort();
     this.unitAbort?.abort();
     this.unitLoadId += 1;
@@ -188,11 +194,12 @@ export class ReadingSystem {
       this.state.books = await this.bookService.loadCatalog(signal);
     }
 
-    const resolved = this.bookService.resolve(bookKey, this.config.DEFAULT_BOOK_KEY);
+    const resolved = this.bookService.resolve(bookId, this.config.DEFAULT_BOOK_KEY);
     const resolvedPath = resolved?.path || resolved?.bookPath;
     if (!resolvedPath && !resolved?.custom) {
       this.state.bookPath = '';
       this.state.bookKey = '';
+      this.state.bookId = '';
       this.state.units = [];
       this.unitView.clearUnits();
       this.unitView.setBookMeta(null);
@@ -200,10 +207,13 @@ export class ReadingSystem {
       return;
     }
 
-    this.state.bookKey = resolved.key || bookKey;
+    // bookId 用于标识「选中的是哪一本」（唯一）；bookKey 仍是级别 key，
+    // 学习进度按它存，同一级别换镜像站不会丢失上次学到第几课
+    this.state.bookId = resolved.id || resolved.key || bookId;
+    this.state.bookKey = resolved.key || bookId;
     this.state.bookPath = (resolvedPath || '').trim().replace(/\/$/, '');
-    setStorage(this.config.STORAGE_KEYS.BOOK_SELECTION, this.state.bookKey);
-    this.unitView.renderBooks(this.state.books, this.state.bookKey);
+    setStorage(this.config.STORAGE_KEYS.BOOK_SELECTION, this.state.bookId);
+    this.unitView.renderBooks(this.state.books, this.state.bookId);
     this.unitView.setBookMeta(resolved);
 
     this.persistProgress.cancel();
@@ -378,9 +388,9 @@ export class ReadingSystem {
     }
 
     on(window, 'hashchange', () => {
-      const newKey = location.hash.slice(1).trim() || this.config.DEFAULT_BOOK_KEY;
-      if (newKey === this.state.bookKey) return;
-      this.applyBookChange(newKey)
+      const newId = location.hash.slice(1).trim() || this.config.DEFAULT_BOOK_KEY;
+      if (newId === this.state.bookId) return;
+      this.applyBookChange(newId)
         .then(() => this.loadUnitFromStorage())
         .catch((error) => {
           if (error?.name !== 'AbortError') {
@@ -444,23 +454,24 @@ export class ReadingSystem {
     this.lyricsView.applyTranslationMode(this.state.translationMode, this.toggleTranslationBtn);
   }
 
-  #onBookSelect(bookKey) {
-    if (!bookKey || location.hash.slice(1) === bookKey) return;
-    location.hash = bookKey;
+  #onBookSelect(bookId) {
+    if (!bookId || location.hash.slice(1) === bookId) return;
+    location.hash = bookId;
   }
 
   /** 导入完成后切换到新书 */
   #onBookImported(book) {
     if (!book?.key) return;
-    if (!this.state.books.some((b) => b.key === book.key)) {
+    const bookId = book.id || book.key;
+    if (!this.state.books.some((b) => (b.id || b.key) === bookId)) {
       // state.books 与 bookService.books 同一引用，push 一次即可
-      this.state.books.push({ key: book.key, title: book.title, custom: true });
+      this.state.books.push({ id: bookId, key: book.key, title: book.title, custom: true });
     }
     // 同步 hash（不触发 hashchange），保证刷新后仍停留在新书
-    if (location.hash.slice(1) !== book.key) {
-      history.replaceState(null, '', `#${book.key}`);
+    if (location.hash.slice(1) !== bookId) {
+      history.replaceState(null, '', `#${bookId}`);
     }
-    this.applyBookChange(book.key)
+    this.applyBookChange(bookId)
       .then(() => this.loadUnitFromStorage())
       .catch((error) => {
         if (error?.name !== 'AbortError') {
@@ -470,17 +481,17 @@ export class ReadingSystem {
   }
 
   /** 删除导入课本后同步列表；若当前正在使用则回到默认课本 */
-  #onBookDeleted(bookKey) {
+  #onBookDeleted(bookId) {
     // state.books 与 bookService.books 是同一数组引用，必须原地过滤以保持共享
     const books = this.state.books;
     for (let i = books.length - 1; i >= 0; i -= 1) {
-      if (books[i]?.key === bookKey) books.splice(i, 1);
+      if ((books[i]?.id || books[i]?.key) === bookId) books.splice(i, 1);
     }
     this.prefetch.clear();
     // 删除的是非当前课本时不会走切换流程，需手动刷新下拉，否则残留已删除项
-    this.unitView.renderBooks(books, this.state.bookKey);
+    this.unitView.renderBooks(books, this.state.bookId);
 
-    if (this.state.bookKey === bookKey) {
+    if (this.state.bookId === bookId) {
       const fallback = this.config.DEFAULT_BOOK_KEY;
       if (location.hash.slice(1) === fallback) {
         this.applyBookChange(fallback)

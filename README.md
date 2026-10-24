@@ -172,6 +172,8 @@ SRT / VTT 的通用规则：
 
 3. **访问**：部署播放器后，通过 `https://your-player.com/#MYBOOK` 直达该课本
 
+> 📌 同一个 `key` 可以注册多个来源（例如 NCE1 同时配本地目录和几个镜像站）。程序会自动给它们生成唯一 id：首次出现的 key 直接用 `key` 本身，其余追加来源后缀（镜像站用域名，如 `NCE1-aonzey.github.io`）。下拉框、URL hash 与「上次选择的课本」都按 id 记录，因此选中第二个来源不会被第一个顶掉；学习进度仍按 `key` 存，同一册换镜像站不会丢失进度。也可以在 `data.json` 里手写 `"id"` 指定。
+
 > ⚠️ 资源服务器需返回 CORS 头（如 `Access-Control-Allow-Origin: *`），否则浏览器会拦截跨域请求 `book.json` 与字幕文件。
 >
 > ⚠️ 服务器的 `Content-Type` 建议给音频返回正确的 MIME（`audio/mpeg` / `audio/mp4` / `audio/wav` / `audio/flac`）。浏览器一般能嗅探，但个别服务器回 `application/octet-stream` 时可能拒绝解码。自带的 `tools/server.py` 已显式配置好这些类型。

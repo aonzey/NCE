@@ -50,13 +50,15 @@ export class UnitView {
   }
 
   /**
-   * @param {Array<{key: string, title: string, bookPath: string}>} books
-   * @param {string} selectedKey
+   * @param {Array<{id?: string, key: string, title: string, bookPath: string}>} books
+   * @param {string} selectedId
    */
-  renderBooks(books, selectedKey) {
+  renderBooks(books, selectedId) {
     const valid = books.filter((book) => book?.key && book?.title && (book?.path || book?.bookPath || book?.custom));
+    // value 必须用唯一 id：同一 key 可能有多个来源（本地 / 各个镜像站），
+    // 用 key 会让选中的第二本在回填时被第一本顶掉
     this.bookSelects.forEach((select) => {
-      fillSelect(select, valid, (book) => book.key, (book) => book.title, selectedKey);
+      fillSelect(select, valid, (book) => book.id || book.key, (book) => book.title, selectedId);
     });
   }
 

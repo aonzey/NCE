@@ -262,7 +262,7 @@ export class ImportPanel {
         await this.importService.deleteBook(book.key);
         this.toast(`已删除「${book.title}」`, { type: 'success' });
         this.renderBookList();
-        this.onDeleted?.(book.key);
+        this.onDeleted?.(book.id || book.key);
       }, { signal });
     }
   }

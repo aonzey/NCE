@@ -110,6 +110,7 @@ export function createInitialState() {
     units: [],
     bookPath: '',
     bookKey: '',
+    bookId: '',
     currentLyrics: [],
     currentLyricIndex: -1,
     currentUnitIndex: -1,
