@@ -299,7 +299,11 @@ export class AudioController {
     setText(this.durationEl, formatTime(this.duration));
 
     if (this.pendingTime > 0 && this.duration > 0) {
-      const target = Math.min(this.pendingTime, Math.max(0, this.duration - 0.05));
+      // 上次停在音频末尾（听完、或手动停到最后）时不要续播：
+      // 只剩几十毫秒会立刻再次 ended，本书循环下表现为「这一课被跳过去」。
+      // 结尾 1 秒内一律从头开始
+      const atEnd = this.pendingTime >= this.duration - 1;
+      const target = atEnd ? 0 : Math.min(this.pendingTime, Math.max(0, this.duration - 0.05));
       if (Number.isFinite(target)) {
         this.audio.currentTime = target;
       }

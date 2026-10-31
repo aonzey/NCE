@@ -737,9 +737,7 @@ export class ReadingSystem {
 
   /** 播放位置是否已到音频末尾（ended 属性在部分时机还没置位，用位置兜一层） */
   #atMediaEnd() {
-    const duration = this.player.duration;
-    if (!Number.isFinite(duration) || duration <= 0) return false;
-    return this.player.currentTime >= duration - 0.05;
+    return this.player.ended || this.#isFinished(this.player.currentTime);
   }
 
   /**
@@ -777,7 +775,7 @@ export class ReadingSystem {
     // 最后一句的句尾就是音频末尾：浏览器会在 ended 之前先把媒体置为 paused，
     // 此时光 seek 回句首不会继续播，剩下的循环次数会被整段吃掉
     // （表现为「最后一句循环次数不对」）。这里认出这种状态并补一次 play()
-    const atMediaEnd = this.player.ended || this.#atMediaEnd();
+    const atMediaEnd = this.#atMediaEnd();
 
     const intervalMs = this.#resolveIntervalMs(this.pendingRestartSpan);
     if (intervalMs <= 0) {
@@ -822,8 +820,12 @@ export class ReadingSystem {
   }
 
   #onAudioEnded() {
-    this.#saveProgress();
     if (!this.state.units.length) return;
+
+    // 一课播完就把这一课的续播进度清零。
+    // 否则下次打开它（本书循环绕回来、或手动点回来）会从「上次的末尾」续播，
+    // 只剩几十毫秒就再次 ended —— 界面上看就是这一课被直接跳过去
+    this.#clearUnitProgress();
 
     if (this.state.loopMode === 'book') {
       const nextIndex = (this.state.currentUnitIndex + 1) % this.state.units.length;
@@ -1058,6 +1060,30 @@ export class ReadingSystem {
     if (!this.ready) return;
     if (!this.state.bookKey || this.state.currentUnitIndex < 0) return;
     if (!Number.isFinite(time) || time < 0) return;
+    // 已经播完就不要记「末尾」这个位置：切换课时 loadUnitByIndex 会先给旧课存一次进度，
+    // 存成末尾的话下次打开只剩几十毫秒就再次 ended —— 本书循环下就是「跳课」
+    if (this.#isFinished(time)) {
+      this.#clearUnitProgress();
+      return;
+    }
     savePlayTime(this.state.bookKey, this.state.currentUnitIndex, time);
+  }
+
+  /** 清除当前课的续播进度（听完 / 需要从头开始时用） */
+  #clearUnitProgress() {
+    if (!this.state.bookKey || this.state.currentUnitIndex < 0) return;
+    savePlayTime(this.state.bookKey, this.state.currentUnitIndex, 0);
+  }
+
+  /**
+   * 给定位置是否已到音频末尾。
+   * 只看位置、不看 ended 标记：ended 之后若又点回到句中，
+   * 那时要存的是新的句子位置，不该被当成「播完了」
+   * @param {number} time
+   */
+  #isFinished(time) {
+    const duration = this.player.duration;
+    if (!Number.isFinite(duration) || duration <= 0) return false;
+    return Number.isFinite(time) && time >= duration - 0.05;
   }
 }
